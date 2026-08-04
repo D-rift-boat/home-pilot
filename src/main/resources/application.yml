@@ -1,0 +1,61 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: home-pilot
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://localhost:3306/iot_device?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: root
+    password: root
+
+# MyBatis-Plus
+mybatis-plus:
+  mapper-locations: classpath:mapper/*.xml
+  type-aliases-package: com.dboat.iot.device.entity
+  configuration:
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+    map-underscore-to-camel-case: true
+  global-config:
+    db-config:
+      id-type: assign_uuid
+      logic-delete-field: deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+
+# MQTT (EMQX Broker)
+mqtt:
+  broker-url: tcp://localhost:1883
+  client-id: home-pilot-server
+  username: admin
+  password: public
+  connection-timeout: 30
+  keep-alive-interval: 60
+  automatic-reconnect: true
+  clean-session: true
+  subscribe-topics:
+    - device/data/upload
+  subscribe-qos:
+    - 1
+
+# InfluxDB
+influxdb:
+  url: http://localhost:8086
+  token: your-influxdb-token
+  org: iot_demo
+  bucket: sensor_data
+
+# SpringDoc / Swagger
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    enabled: true
+
+# Logging
+logging:
+  level:
+    com.dboat.iot.device: DEBUG
+    org.eclipse.paho: INFO
