@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration scan="false">
+    <!-- 变量定义 -->
+    <property name="APP_NAME" value="home-pilot"/>
+    <property name="LOG_PATH" value="logs"/>
+
+    <!-- 磁盘文件：纯文本，不能带ANSI颜色码，去掉无效%T -->
+    <property name="FILE_LOG_PATTERN" value="%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{40}:%L - %msg%n"/>
+
+    <!-- 控制台：SpringBoot ANSI彩色输出，仅控制台生效，去掉无效%T -->
+    <property name="CONSOLE_LOG_PATTERN" value="%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %highlight(%-5level) %cyan(%logger{40}:%L) - %msg%n"/>
+
+    <!-- 控制台输出：开启ANSI颜色 -->
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
+            <charset>UTF-8</charset>
+            <pattern>${CONSOLE_LOG_PATTERN}</pattern>
+        </encoder>
+        <withJansi>true</withJansi>
+    </appender>
+
+    <!-- 文件输出：按天+大小切割，保留5天 -->
+    <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <!-- 当前正在写的日志文件 -->
+        <file>${LOG_PATH}/${APP_NAME}.log</file>
+
+        <!-- 按时间+大小滚动策略 -->
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_PATH}/${APP_NAME}.%d{yyyy-MM-dd}.%i.log</fileNamePattern>
+            <maxFileSize>100MB</maxFileSize>
+            <maxHistory>5</maxHistory>
+            <totalSizeCap>2GB</totalSizeCap>
+        </rollingPolicy>
+
+        <!-- encoder 放在 rollingPolicy外面！！ -->
+        <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
+            <charset>UTF-8</charset>
+            <pattern>${FILE_LOG_PATTERN}</pattern>
+        </encoder>
+    </appender>
+
+    <!-- root根日志级别，绑定控制台+文件 -->
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="FILE"/>
+    </root>
+
+    <!-- 第三方包降噪，减少冗余日志 -->
+    <logger name="org.apache.tomcat" level="WARN"/>
+    <logger name="io.netty" level="WARN"/>
+    <logger name="com.influxdb" level="INFO"/>
+    <logger name="org.eclipse.paho" level="INFO"/>
+    <logger name="org.springframework" level="INFO"/>
+</configuration>
