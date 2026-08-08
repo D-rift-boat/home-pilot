@@ -1,5 +1,7 @@
 package com.dboat.iot.api;
 
+import com.dboat.iot.dto.request.CommandGetByIdReqDTO;
+import com.dboat.iot.dto.request.CommandQueryReqDTO;
 import com.dboat.iot.dto.request.CommandSendReqDTO;
 import com.dboat.iot.dto.response.CommandRespDTO;
 import com.dboat.iot.dto.response.Result;
@@ -28,15 +30,15 @@ public class DeviceCommandController {
         return Result.ok(deviceCommandService.sendCommand(request));
     }
 
-    @GetMapping("/device/{deviceId}")
+    @PostMapping("/listByDevice")
     @Operation(summary = "Get commands by device", description = "Get all commands for a device")
-    public Result<List<CommandRespDTO>> getCommandsByDeviceId(@PathVariable String deviceId) {
-        return Result.ok(deviceCommandService.getCommandsByDeviceId(deviceId));
+    public Result<List<CommandRespDTO>> getCommandsByDeviceId(@Valid @RequestBody CommandQueryReqDTO request) {
+        return Result.ok(deviceCommandService.getCommandsByDeviceId(request));
     }
 
-    @GetMapping("/{id}")
+    @PostMapping("/getById")
     @Operation(summary = "Get command by ID", description = "Get command detail by ID")
-    public Result<CommandRespDTO> getCommandById(@PathVariable String id) {
-        return Result.ok(deviceCommandService.getCommandById(id));
+    public Result<CommandRespDTO> getCommandById(@Valid @RequestBody CommandGetByIdReqDTO request) {
+        return Result.ok(deviceCommandService.getCommandById(request));
     }
 }

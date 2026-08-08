@@ -4,8 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
-import com.dboat.iot.dto.request.DeviceCreateReqDTO;
-import com.dboat.iot.dto.request.DeviceUpdateReqDTO;
+import com.dboat.iot.dto.request.*;
 import com.dboat.iot.dto.response.DeviceRespDTO;
 import com.dboat.iot.entity.Device;
 import com.dboat.iot.exception.BusinessException;
@@ -39,10 +38,10 @@ public class DeviceServiceImpl extends ServiceImpl<DeviceMapper, Device> impleme
     }
 
     @Override
-    public DeviceRespDTO updateDevice(String id, DeviceUpdateReqDTO request) {
-        Device device = this.getById(id);
+    public DeviceRespDTO updateDevice(DeviceUpdateReqDTO request) {
+        Device device = this.getById(request.getId());
         if (device == null) {
-            throw new BusinessException("Device not found: " + id);
+            throw new BusinessException("Device not found: " + request.getId());
         }
 
         if (StringUtils.hasText(request.getDeviceName())) {
@@ -66,53 +65,52 @@ public class DeviceServiceImpl extends ServiceImpl<DeviceMapper, Device> impleme
     }
 
     @Override
-    public void deleteDevice(String id) {
-        Device device = this.getById(id);
+    public void deleteDevice(DeviceDeleteReqDTO request) {
+        Device device = this.getById(request.getId());
         if (device == null) {
-            throw new BusinessException("Device not found: " + id);
+            throw new BusinessException("Device not found: " + request.getId());
         }
-        this.removeById(id); // Logical delete via @TableLogic
+        this.removeById(request.getId()); // Logical delete via @TableLogic
     }
 
     @Override
-    public DeviceRespDTO getDeviceById(String id) {
-        Device device = this.getById(id);
+    public DeviceRespDTO getDeviceById(DeviceGetByIdReqDTO request) {
+        Device device = this.getById(request.getId());
         if (device == null) {
-            throw new BusinessException("Device not found: " + id);
+            throw new BusinessException("Device not found: " + request.getId());
         }
         return toResponse(device);
     }
 
     @Override
-    public DeviceRespDTO getDeviceByDeviceId(String deviceId) {
+    public DeviceRespDTO getDeviceByDeviceId(DeviceGetByDeviceIdReqDTO request) {
         LambdaQueryWrapper<Device> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(Device::getDeviceId, deviceId);
+        wrapper.eq(Device::getDeviceId, request.getDeviceId());
         Device device = this.getOne(wrapper);
         if (device == null) {
-            throw new BusinessException("Device not found: " + deviceId);
+            throw new BusinessException("Device not found: " + request.getDeviceId());
         }
         return toResponse(device);
     }
 
     @Override
-    public IPage<DeviceRespDTO> listDevices(String deviceId, String deviceName, String deviceModel,
-                                              Integer status, int pageNum, int pageSize) {
+    public IPage<DeviceRespDTO> listDevices(DeviceListReqDTO request) {
         LambdaQueryWrapper<Device> wrapper = new LambdaQueryWrapper<>();
-        if (StringUtils.hasText(deviceId)) {
-            wrapper.like(Device::getDeviceId, deviceId);
+        if (StringUtils.hasText(request.getDeviceId())) {
+            wrapper.like(Device::getDeviceId, request.getDeviceId());
         }
-        if (StringUtils.hasText(deviceName)) {
-            wrapper.like(Device::getDeviceName, deviceName);
+        if (StringUtils.hasText(request.getDeviceName())) {
+            wrapper.like(Device::getDeviceName, request.getDeviceName());
         }
-        if (StringUtils.hasText(deviceModel)) {
-            wrapper.eq(Device::getDeviceModel, deviceModel);
+        if (StringUtils.hasText(request.getDeviceModel())) {
+            wrapper.eq(Device::getDeviceModel, request.getDeviceModel());
         }
-        if (status != null) {
-            wrapper.eq(Device::getStatus, status);
+        if (request.getStatus() != null) {
+            wrapper.eq(Device::getStatus, request.getStatus());
         }
         wrapper.orderByDesc(Device::getUpdateTime);
 
-        Page<Device> page = new Page<>(pageNum, pageSize);
+        Page<Device> page = new Page<>(request.getPageNum(), request.getPageSize());
         IPage<Device> devicePage = this.page(page, wrapper);
         return devicePage.convert(this::toResponse);
     }

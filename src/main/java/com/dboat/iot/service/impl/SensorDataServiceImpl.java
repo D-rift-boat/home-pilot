@@ -1,6 +1,7 @@
 package com.dboat.iot.service.impl;
 
 import com.dboat.iot.config.InfluxDBConfig;
+import com.dboat.iot.dto.request.SensorDataLatestReqDTO;
 import com.dboat.iot.dto.request.SensorDataQueryReqDTO;
 import com.dboat.iot.dto.response.SensorDataRespDTO;
 import com.dboat.iot.entity.SensorData;
@@ -57,9 +58,9 @@ public class SensorDataServiceImpl implements SensorDataService {
     }
 
     @Override
-    public SensorDataRespDTO getLatestSensorData(String deviceId) {
+    public SensorDataRespDTO getLatestSensorData(SensorDataLatestReqDTO request) {
         SensorData data = influxDBUtils.queryLatestSensorData(
-                influxDBConfig.getBucket(), deviceId);
+                influxDBConfig.getBucket(), request.getDeviceId());
         if (data == null) {
             return null;
         }

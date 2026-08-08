@@ -2,8 +2,7 @@ package com.dboat.iot.service;
 
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.service.IService;
-import com.dboat.iot.dto.request.DeviceCreateReqDTO;
-import com.dboat.iot.dto.request.DeviceUpdateReqDTO;
+import com.dboat.iot.dto.request.*;
 import com.dboat.iot.dto.response.DeviceRespDTO;
 import com.dboat.iot.entity.Device;
 
@@ -11,16 +10,15 @@ public interface DeviceService extends IService<Device> {
 
     DeviceRespDTO createDevice(DeviceCreateReqDTO request);
 
-    DeviceRespDTO updateDevice(String id, DeviceUpdateReqDTO request);
+    DeviceRespDTO updateDevice(DeviceUpdateReqDTO request);
 
-    void deleteDevice(String id);
+    void deleteDevice(DeviceDeleteReqDTO request);
 
-    DeviceRespDTO getDeviceById(String id);
+    DeviceRespDTO getDeviceById(DeviceGetByIdReqDTO request);
 
-    DeviceRespDTO getDeviceByDeviceId(String deviceId);
+    DeviceRespDTO getDeviceByDeviceId(DeviceGetByDeviceIdReqDTO request);
 
-    IPage<DeviceRespDTO> listDevices(String deviceId, String deviceName, String deviceModel,
-                                       Integer status, int pageNum, int pageSize);
+    IPage<DeviceRespDTO> listDevices(DeviceListReqDTO request);
 
     /**
      * Auto-register device from MQTT message if not exists

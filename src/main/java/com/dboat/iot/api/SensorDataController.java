@@ -1,5 +1,6 @@
 package com.dboat.iot.api;
 
+import com.dboat.iot.dto.request.SensorDataLatestReqDTO;
 import com.dboat.iot.dto.request.SensorDataQueryReqDTO;
 import com.dboat.iot.dto.response.Result;
 import com.dboat.iot.dto.response.SensorDataRespDTO;
@@ -12,7 +13,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 
 @RestController
-@RequestMapping("/api/sensor-data")
+@RequestMapping("/api/sensorData")
 @Tag(name = "Sensor Data", description = "Sensor data query APIs")
 public class SensorDataController {
 
@@ -22,16 +23,16 @@ public class SensorDataController {
         this.sensorDataService = sensorDataService;
     }
 
-    @GetMapping("/history")
+    @PostMapping("/history")
     @Operation(summary = "Query history data", description = "Query sensor data by device ID and time range")
-    public Result<List<SensorDataRespDTO>> queryHistory(@Valid SensorDataQueryReqDTO request) {
+    public Result<List<SensorDataRespDTO>> queryHistory(@Valid @RequestBody SensorDataQueryReqDTO request) {
         return Result.ok(sensorDataService.querySensorData(request));
     }
 
-    @GetMapping("/latest/{deviceId}")
+    @PostMapping("/latest")
     @Operation(summary = "Get latest data", description = "Get the latest sensor data for a device")
-    public Result<SensorDataRespDTO> getLatest(@PathVariable String deviceId) {
-        SensorDataRespDTO data = sensorDataService.getLatestSensorData(deviceId);
+    public Result<SensorDataRespDTO> getLatest(@Valid @RequestBody SensorDataLatestReqDTO request) {
+        SensorDataRespDTO data = sensorDataService.getLatestSensorData(request);
         return Result.ok(data);
     }
 }

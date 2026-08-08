@@ -1,8 +1,7 @@
 package com.dboat.iot.api;
 
 import com.baomidou.mybatisplus.core.metadata.IPage;
-import com.dboat.iot.dto.request.DeviceCreateReqDTO;
-import com.dboat.iot.dto.request.DeviceUpdateReqDTO;
+import com.dboat.iot.dto.request.*;
 import com.dboat.iot.dto.response.DeviceRespDTO;
 import com.dboat.iot.dto.response.Result;
 import com.dboat.iot.service.DeviceService;
@@ -22,47 +21,40 @@ public class DeviceController {
         this.deviceService = deviceService;
     }
 
-    @PostMapping
+    @PostMapping("/create")
     @Operation(summary = "Register device", description = "Manually register a new device")
     public Result<DeviceRespDTO> createDevice(@Valid @RequestBody DeviceCreateReqDTO request) {
         return Result.ok(deviceService.createDevice(request));
     }
 
-    @PutMapping("/{id}")
+    @PostMapping("/update")
     @Operation(summary = "Update device", description = "Update device info by ID")
-    public Result<DeviceRespDTO> updateDevice(@PathVariable String id,
-                                                @RequestBody DeviceUpdateReqDTO request) {
-        return Result.ok(deviceService.updateDevice(id, request));
+    public Result<DeviceRespDTO> updateDevice(@Valid @RequestBody DeviceUpdateReqDTO request) {
+        return Result.ok(deviceService.updateDevice(request));
     }
 
-    @DeleteMapping("/{id}")
+    @PostMapping("/delete")
     @Operation(summary = "Delete device", description = "Logically delete a device")
-    public Result<Void> deleteDevice(@PathVariable String id) {
-        deviceService.deleteDevice(id);
+    public Result<Void> deleteDevice(@Valid @RequestBody DeviceDeleteReqDTO request) {
+        deviceService.deleteDevice(request);
         return Result.ok();
     }
 
-    @GetMapping("/{id}")
+    @PostMapping("/getById")
     @Operation(summary = "Get device by ID", description = "Get device detail by internal ID")
-    public Result<DeviceRespDTO> getDeviceById(@PathVariable String id) {
-        return Result.ok(deviceService.getDeviceById(id));
+    public Result<DeviceRespDTO> getDeviceById(@Valid @RequestBody DeviceGetByIdReqDTO request) {
+        return Result.ok(deviceService.getDeviceById(request));
     }
 
-    @GetMapping("/by-device-id/{deviceId}")
+    @PostMapping("/getByDeviceId")
     @Operation(summary = "Get device by device ID", description = "Get device detail by unique device identifier")
-    public Result<DeviceRespDTO> getDeviceByDeviceId(@PathVariable String deviceId) {
-        return Result.ok(deviceService.getDeviceByDeviceId(deviceId));
+    public Result<DeviceRespDTO> getDeviceByDeviceId(@Valid @RequestBody DeviceGetByDeviceIdReqDTO request) {
+        return Result.ok(deviceService.getDeviceByDeviceId(request));
     }
 
-    @GetMapping("/list")
+    @PostMapping("/list")
     @Operation(summary = "List devices", description = "Paginated device list with filters")
-    public Result<IPage<DeviceRespDTO>> listDevices(
-            @RequestParam(required = false) String deviceId,
-            @RequestParam(required = false) String deviceName,
-            @RequestParam(required = false) String deviceModel,
-            @RequestParam(required = false) Integer status,
-            @RequestParam(defaultValue = "1") int pageNum,
-            @RequestParam(defaultValue = "10") int pageSize) {
-        return Result.ok(deviceService.listDevices(deviceId, deviceName, deviceModel, status, pageNum, pageSize));
+    public Result<IPage<DeviceRespDTO>> listDevices(@Valid @RequestBody DeviceListReqDTO request) {
+        return Result.ok(deviceService.listDevices(request));
     }
 }

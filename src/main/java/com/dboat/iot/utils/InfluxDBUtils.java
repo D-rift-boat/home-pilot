@@ -36,7 +36,7 @@ public class InfluxDBUtils {
      */
     public void writeSensorData(String bucket, SensorData sensorData) {
         Point point = Point.measurement("sensor")
-                .addTag("device_id", sensorData.getDeviceId())
+                .addTag("device", sensorData.getDeviceId())
                 .addField("temp", sensorData.getTemp())
                 .addField("humi", sensorData.getHumi())
                 .addField("press", sensorData.getPress())
@@ -55,7 +55,7 @@ public class InfluxDBUtils {
                 "from(bucket: \"%s\") " +
                 "|> range(start: %s, stop: %s) " +
                 "|> filter(fn: (r) => r[\"_measurement\"] == \"sensor\") " +
-                "|> filter(fn: (r) => r[\"device_id\"] == \"%s\") " +
+                "|> filter(fn: (r) => r[\"device\"] == \"%s\") " +
                 "|> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")",
                 bucket, start.toString(), end.toString(), deviceId
         );
@@ -92,7 +92,7 @@ public class InfluxDBUtils {
                 "from(bucket: \"%s\") " +
                 "|> range(start: -30d) " +
                 "|> filter(fn: (r) => r[\"_measurement\"] == \"sensor\") " +
-                "|> filter(fn: (r) => r[\"device_id\"] == \"%s\") " +
+                "|> filter(fn: (r) => r[\"device\"] == \"%s\") " +
                 "|> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\") " +
                 "|> last()",
                 bucket, deviceId

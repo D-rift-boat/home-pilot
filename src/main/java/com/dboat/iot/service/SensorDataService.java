@@ -1,5 +1,6 @@
 package com.dboat.iot.service;
 
+import com.dboat.iot.dto.request.SensorDataLatestReqDTO;
 import com.dboat.iot.dto.request.SensorDataQueryReqDTO;
 import com.dboat.iot.dto.response.SensorDataRespDTO;
 import com.dboat.iot.entity.SensorData;
@@ -12,5 +13,5 @@ public interface SensorDataService {
 
     List<SensorDataRespDTO> querySensorData(SensorDataQueryReqDTO request);
 
-    SensorDataRespDTO getLatestSensorData(String deviceId);
+    SensorDataRespDTO getLatestSensorData(SensorDataLatestReqDTO request);
 }

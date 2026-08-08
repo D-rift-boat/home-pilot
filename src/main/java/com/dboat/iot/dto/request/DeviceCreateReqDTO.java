@@ -3,10 +3,12 @@ package com.dboat.iot.dto.request;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotBlank;
 import lombok.Data;
+import lombok.EqualsAndHashCode;
 
 @Data
+@EqualsAndHashCode(callSuper = true)
 @Schema(description = "Device create request")
-public class DeviceCreateReqDTO {
+public class DeviceCreateReqDTO extends BaseReqDTO {
 
     @NotBlank(message = "Device ID cannot be empty")
     @Schema(description = "Unique device identifier", example = "esp32s3_001")

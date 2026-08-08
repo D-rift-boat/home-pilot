@@ -8,9 +8,9 @@
 
 ## 1\.2 核心架构分层
 
-- **API 层**：提供 RESTful 风格 HTTP 接口，负责请求接收、参数校验、响应封装，对接前端系统与第三方平台，优先支持设备数据查询相关接口。
+- **API 层**：提供统一 POST 风格 HTTP 接口，所有接口均使用 POST 请求，入参统一通过 DTO 接收，负责请求接收、参数校验、响应封装，对接前端系统与第三方平台，优先支持设备数据查询相关接口。
 
-- **DTO 层**：数据传输对象层，封装接口请求与响应数据，实现实体类与外部数据的解耦，避免敏感字段泄露，规范数据传输格式。
+- **DTO 层**：数据传输对象层，封装接口请求与响应数据，实现实体类与外部数据的解耦，避免敏感字段泄露，规范数据传输格式。请求 DTO 统一继承 `BaseReqDTO` 基类，定义 requestId、timestamp、sign 等公共参数。
 
 - **业务层**：核心业务逻辑处理层，包含设备管理、数据解析、MQTT 消息处理、InfluxDB 数据写入与查询等模块，通过 MyBatis\-Plus 实现数据库操作，封装业务逻辑，降低与数据层的耦合。
 
@@ -246,12 +246,15 @@ MQTT 消息处理模块负责设备与系统之间的消息交互，涵盖设备
 |类型|命名规则|示例|包路径|
 |---|---|---|---|
 |请求参数 DTO|`xxxReqDTO`|`DeviceCreateReqDTO`、`SensorDataQueryReqDTO`|`com.dboat.iot.dto.request`|
+|请求基类 DTO|`BaseReqDTO`|`BaseReqDTO`（所有请求 DTO 的父类）|`com.dboat.iot.dto.request`|
 |响应数据 DTO|`xxxRespDTO`|`DeviceRespDTO`、`CommandRespDTO`|`com.dboat.iot.dto.response`|
 
 **说明：**
-- 请求 DTO 统一以 `ReqDTO` 结尾，放在 `dto/request/` 子包下。
+- 请求 DTO 统一以 `ReqDTO` 结尾，放在 `dto/request/` 子包下，全部继承 `BaseReqDTO` 基类。
+- `BaseReqDTO` 定义所有请求的公共参数（如 `requestId`、`timestamp`、`sign`），各子 DTO 通过继承复用，避免重复定义。
 - 响应 DTO 统一以 `RespDTO` 结尾，放在 `dto/response/` 子包下。
 - 所有 DTO 类均不使用 `Request`/`Response` 后缀，以避免与 Spring MVC 的 `HttpServletRequest`/`HttpServletResponse` 产生混淆。
+- 所有 API 接口统一使用 POST 请求，入参通过 `@RequestBody` 接收 DTO，路径参数与查询参数均封装在 DTO 中传递。
 
 ```plain text
 src
@@ -266,11 +269,19 @@ src
 │   │               │   ├── SensorDataController.java  // 传感器数据查询接口
 │   │               │   └── DeviceCommandController.java  // 指令下发与查询接口
 │   │               ├── dto  // DTO 层：数据传输对象
-│   │               │   ├── request  // 请求参数 DTO（统一 xxxReqDTO 命名）
+│   │               │   ├── request  // 请求参数 DTO（统一 xxxReqDTO 命名，继承 BaseReqDTO）
+│   │               │   │   ├── BaseReqDTO.java  // 请求基类（requestId、timestamp、sign 等公共参数）
 │   │               │   │   ├── DeviceCreateReqDTO.java  // 设备创建请求
 │   │               │   │   ├── DeviceUpdateReqDTO.java  // 设备更新请求
+│   │               │   │   ├── DeviceDeleteReqDTO.java  // 设备删除请求
+│   │               │   │   ├── DeviceGetByIdReqDTO.java  // 按 ID 查询设备请求
+│   │               │   │   ├── DeviceGetByDeviceIdReqDTO.java  // 按设备 ID 查询请求
+│   │               │   │   ├── DeviceListReqDTO.java  // 设备列表查询请求
 │   │               │   │   ├── CommandSendReqDTO.java  // 指令发送请求
+│   │               │   │   ├── CommandQueryReqDTO.java  // 按设备查询指令请求
+│   │               │   │   ├── CommandGetByIdReqDTO.java  // 按 ID 查询指令请求
 │   │               │   │   └── SensorDataQueryReqDTO.java  // 传感器数据查询请求
+│   │               │   │   └── SensorDataLatestReqDTO.java  // 传感器最新数据查询请求
 │   │               │   └── response  // 响应数据 DTO（统一 xxxRespDTO 命名）
 │   │               │       ├── DeviceRespDTO.java  // 设备信息响应
 │   │               │       ├── SensorDataRespDTO.java  // 传感器数据响应

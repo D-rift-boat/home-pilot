@@ -2,6 +2,8 @@ package com.dboat.iot.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.dboat.iot.dto.request.CommandGetByIdReqDTO;
+import com.dboat.iot.dto.request.CommandQueryReqDTO;
 import com.dboat.iot.dto.request.CommandSendReqDTO;
 import com.dboat.iot.dto.response.CommandRespDTO;
 import com.dboat.iot.entity.DeviceCommand;
@@ -47,18 +49,18 @@ public class DeviceCommandServiceImpl extends ServiceImpl<DeviceCommandMapper, D
     }
 
     @Override
-    public List<CommandRespDTO> getCommandsByDeviceId(String deviceId) {
+    public List<CommandRespDTO> getCommandsByDeviceId(CommandQueryReqDTO request) {
         LambdaQueryWrapper<DeviceCommand> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(DeviceCommand::getDeviceId, deviceId);
+        wrapper.eq(DeviceCommand::getDeviceId, request.getDeviceId());
         wrapper.orderByDesc(DeviceCommand::getCreateTime);
         return this.list(wrapper).stream().map(this::toResponse).collect(Collectors.toList());
     }
 
     @Override
-    public CommandRespDTO getCommandById(String id) {
-        DeviceCommand command = this.getById(id);
+    public CommandRespDTO getCommandById(CommandGetByIdReqDTO request) {
+        DeviceCommand command = this.getById(request.getId());
         if (command == null) {
-            throw new BusinessException("Command not found: " + id);
+            throw new BusinessException("Command not found: " + request.getId());
         }
         return toResponse(command);
     }
