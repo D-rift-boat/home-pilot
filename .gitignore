@@ -95,6 +95,7 @@ logs/
 *.env
 *.properties.local
 application-local.yml
+application-local-vm.yml
 application-local.properties
 
 # ================================

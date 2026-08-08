@@ -5,7 +5,7 @@ spring:
   application:
     name: home-pilot
   profiles:
-    active: local
+    active: local-vm
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
     url: jdbc:mysql://localhost:3306/iot_device?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
