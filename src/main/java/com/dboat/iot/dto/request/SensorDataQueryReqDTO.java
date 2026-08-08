@@ -12,7 +12,7 @@ import java.time.LocalDateTime;
 public class SensorDataQueryReqDTO {
 
     @NotBlank(message = "Device ID cannot be empty")
-    @Schema(description = "Device ID", example = "esp32s3_001")
+    @Schema(description = "Device ID", example = "esp32s3-001")
     private String deviceId;
 
     @DateTimeFormat(pattern = "yyyy-MM-dd HH:mm:ss")

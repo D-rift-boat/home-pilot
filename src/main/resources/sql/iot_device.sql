@@ -1,19 +1,19 @@
 -- =============================================
 -- 物联网设备管理系统 - MySQL 数据库脚本
 -- IoT Device Management System - MySQL Schema
--- 数据库 Database: iot_device
+-- 数据库 Database: iot
 -- =============================================
 
-CREATE DATABASE IF NOT EXISTS `iot_device`
+CREATE DATABASE IF NOT EXISTS `iot`
     DEFAULT CHARACTER SET utf8mb4
     DEFAULT COLLATE utf8mb4_general_ci;
 
-USE `iot_device`;
+USE `iot`;
 
 -- ----------------------------
 -- 设备信息表 / Device info table
 -- ----------------------------
-CREATE TABLE IF NOT EXISTS `iot_device` (
+CREATE TABLE IF NOT EXISTS `device` (
     `id`               VARCHAR(64)   NOT NULL COMMENT '主键ID / Primary key (UUID)',
     `device_id`        VARCHAR(64)   NOT NULL COMMENT '设备唯一标识 / Unique device identifier',
     `device_name`      VARCHAR(100)  DEFAULT NULL COMMENT '设备名称 / Device name',
@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS `iot_device` (
 -- ----------------------------
 -- 设备指令表 / Device command table
 -- ----------------------------
-CREATE TABLE IF NOT EXISTS `iot_device_command` (
+CREATE TABLE IF NOT EXISTS `device_command` (
     `id`          VARCHAR(64)   NOT NULL COMMENT '主键ID / Primary key (UUID)',
     `device_id`   VARCHAR(64)   NOT NULL COMMENT '关联设备标识 / Associated device_id',
     `command`     VARCHAR(255)  NOT NULL COMMENT '指令内容 / Command content (e.g. set_temp:25, restart)',

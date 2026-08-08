@@ -45,8 +45,10 @@ mqtt:
 influxdb:
   url: http://localhost:8086
   token: your-influxdb-token
-  org: iot_demo
-  bucket: sensor_data
+  org-name: iot
+  bucket: sensor
+  log-level: BASIC
+
 
 # SpringDoc / Swagger
 springdoc:

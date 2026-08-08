@@ -19,7 +19,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(BusinessException.class)
     @ResponseStatus(HttpStatus.OK)
     public Result<Void> handleBusinessException(BusinessException e, HttpServletRequest request) {
-        log.error("Business exception at [{}]: {}", request.getRequestURI(), e.getMessage());
+        log.error("Business exception at [{}]: {}", request.getRequestURI(), e.getMessage(),e);
         return Result.fail(e.getCode(), e.getMessage());
     }
 
@@ -30,7 +30,7 @@ public class GlobalExceptionHandler {
                 .map(error -> error.getField() + ": " + error.getDefaultMessage())
                 .reduce((a, b) -> a + "; " + b)
                 .orElse("Parameter validation failed");
-        log.error("Validation exception: {}", message);
+        log.error("Validation exception: {}", message,e);
         return Result.fail(HttpStatus.BAD_REQUEST.value(), message);
     }
 
@@ -41,7 +41,7 @@ public class GlobalExceptionHandler {
                 .map(error -> error.getField() + ": " + error.getDefaultMessage())
                 .reduce((a, b) -> a + "; " + b)
                 .orElse("Parameter binding failed");
-        log.error("Bind exception: {}", message);
+        log.error("Bind exception: {}", message,e);
         return Result.fail(HttpStatus.BAD_REQUEST.value(), message);
     }
 

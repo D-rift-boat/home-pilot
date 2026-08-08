@@ -359,4 +359,221 @@ src
 
 补充说明：目录中 SensorDataMapper 已移除（原设计冗余），因 InfluxDB 数据操作无需 MyBatis\-Plus 映射接口，通过 InfluxDB 客户端工具类（InfluxDBUtils）即可实现数据读写，贴合 InfluxDB 时序数据库的操作特性。
 
+# 七、开发规范与基础配置
+
+## 7\.1 多环境配置规范
+
+项目采用 Spring Profiles 机制实现多环境配置管理，通过 `application.yml` 作为主配置文件，`application-{profile}.yml` 作为环境专属配置文件，实现环境隔离。
+
+### 7\.1\.1 配置文件结构
+
+| 配置文件 | 用途 | 说明 |
+|---|---|---|
+| `application.yml` | 主配置文件 | 定义通用配置项及当前激活的环境（`spring.profiles.active`） |
+| `application-local.yml` | 本地开发环境 | 开发者本机运行，连接本地中间件（localhost），敏感信息使用脱敏占位值 |
+| `application-local-vm.yml` | 本地联调环境 | 连接局域网/测试服务器中间件，用于联调与功能验证 |
+
+### 7\.1\.2 环境切换方式
+
+通过主配置文件 `application.yml` 中的 `spring.profiles.active` 属性切换激活环境：
+
+```yaml
+spring:
+  profiles:
+    active: local-vm   # 可选值：local、local-vm
+```
+
+### 7\.1\.3 环境配置规范
+
+- **敏感信息隔离**：`application-local.yml` 和 `application-local-vm.yml` 包含数据库密码、Token 等敏感信息，已在 `.gitignore` 中配置忽略，禁止提交至代码仓库。
+- **功能总开关**：`application-local.yml` 提供 `feature.mqtt-enable`、`feature.influxdb-enable` 开关配置，本地开发时可按需关闭 MQTT、InfluxDB 等中间件连接，降低本地启动依赖。
+- **配置项命名规范**：所有自定义配置项统一使用小写加连字符（kebab-case）格式，如 `broker-url`、`keep-alive-interval`，与 SpringBoot 官方风格保持一致。
+
+## 7\.2 .gitignore 规范
+
+项目 `.gitignore` 按分类分区管理，覆盖编译产物、IDE 文件、操作系统文件、日志、敏感配置等场景，具体分区如下：
+
+| 分区 | 忽略内容 | 说明 |
+|---|---|---|
+| 编译产物 | `*.class`、`*.jar`、`target/` 等 | 忽略所有编译生成的二进制文件与构建输出目录 |
+| Maven/Gradle 输出 | `target/`、`.gradle/`、`build/` | 忽略构建工具输出，保留 Maven Wrapper JAR |
+| IDE 文件 | `.idea/`、`*.iml`、`.classpath` 等 | 忽略 IntelliJ IDEA、Eclipse、NetBeans、VS Code 等 IDE 专属文件 |
+| 操作系统文件 | `.DS_Store`、`Thumbs.db`、`Desktop.ini` 等 | 忽略 macOS、Windows 系统自动生成的元数据文件 |
+| 日志文件 | `*.log`、`logs/` | 忽略运行时产生的日志文件与日志目录 |
+| 敏感配置 | `application-local.yml`、`application-local-vm.yml`、`*.env` 等 | 忽略包含密码、Token 等敏感信息的环境配置文件，防止泄露 |
+| Spring Boot | `*.pid`、`spring-boot-devtools.jar` | 忽略 Spring Boot 运行时产生的进程文件与热部署 JAR |
+| 临时文件 | `*.bak`、`*.tmp`、`*.temp`、`hs_err_pid*` 等 | 忽略各类临时文件与 JVM 崩溃日志 |
+
+**规范要求：**
+
+- 新增配置文件若包含敏感信息（如密码、Token、密钥等），必须同步更新 `.gitignore` 添加对应忽略规则。
+- 禁止使用 `git add -f` 强制提交已忽略的文件，特殊情况需经团队评审确认。
+
+## 7\.3 跨域配置
+
+项目通过 `WebConfig.java` 配置类注册全局 `CorsFilter`，统一处理跨域请求，支持前端开发调试与第三方平台对接。
+
+### 7\.3\.1 配置说明
+
+- **实现方式**：通过 `@Configuration` 配置类注册 `CorsFilter` Bean，基于 Spring 标准的 `UrlBasedCorsConfigurationSource` 实现，全局生效。
+- **允许来源**：`addAllowedOriginPattern("*")`，允许所有来源跨域访问（开发阶段），生产环境建议限制为具体域名。
+- **允许方法**：`addAllowedMethod("*")`，支持 GET、POST、PUT、DELETE 等所有 HTTP 方法。
+- **允许请求头**：`addAllowedHeader("*")`，允许所有请求头。
+- **凭证支持**：`setAllowCredentials(true)`，允许跨域携带 Cookie 等凭证信息。
+- **预检缓存**：`setMaxAge(3600L)`，预检请求（OPTIONS）结果缓存 3600 秒（1 小时），减少预检请求频次。
+
+### 7\.3\.2 注意事项
+
+- 当前配置为开发阶段全开放模式，生产环境部署时需将 `addAllowedOriginPattern("*")` 修改为具体的前端域名，避免安全风险。
+- 跨域配置全局生效（`/**`），覆盖所有 API 接口路径。
+
+## 7\.4 全局异常处理规范
+
+项目通过 `GlobalExceptionHandler`（`@RestControllerAdvice`）与自定义 `BusinessException` 配合，实现全局异常统一捕获与标准化响应，避免异常堆栈信息直接暴露给前端。
+
+### 7\.4\.1 统一响应格式
+
+所有接口返回统一的 `Result<T>` 包装结构：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `code` | `int` | 状态码，200 表示成功，其他为异常码 |
+| `message` | `String` | 提示信息 |
+| `data` | `T` | 响应数据（异常时为 null） |
+
+### 7\.4\.2 异常分类处理
+
+| 异常类型 | HTTP 状态码 | 响应 code | 处理方式 |
+|---|---|---|---|
+| `BusinessException`（自定义业务异常） | 200 | 异常自定义 code（默认 500） | 记录 error 日志，返回业务错误信息 |
+| `MethodArgumentNotValidException`（参数校验异常） | 400 | 400 | 提取字段校验错误信息拼接，记录 error 日志 |
+| `BindException`（参数绑定异常） | 400 | 400 | 提取字段绑定错误信息拼接，记录 error 日志 |
+| `Exception`（未知系统异常） | 500 | 500 | 记录完整异常堆栈日志，返回通用错误提示"Internal server error" |
+
+### 7\.4\.3 自定义业务异常
+
+`BusinessException` 继承 `RuntimeException`，包含 `code`（异常码）和 `message`（错误信息）两个属性，支持两种构造方式：
+
+- `BusinessException(String message)`：默认 code 为 500，用于一般业务异常。
+- `BusinessException(int code, String message)`：自定义异常码，用于需要精确标识异常类型的场景。
+
+### 7\.4\.4 使用规范
+
+- 业务逻辑中需要主动抛出异常时，统一使用 `BusinessException`，禁止直接抛出 `RuntimeException`。
+- 全局异常处理器捕获异常时，均通过 `log.error()` 记录异常日志，业务异常记录异常消息，系统异常记录完整堆栈。
+- 前端根据响应 `code` 判断请求是否成功，`message` 可直接用于用户提示。
+
+## 7\.5 日志格式规范
+
+项目基于 Logback 实现日志管理，通过 `logback-spring.xml` 配置文件定义日志输出格式，区分控制台与文件两种输出通道，分别适配开发调试与生产运维场景。
+
+### 7\.5\.1 日志输出通道
+
+| 通道 | Appender | 输出目标 | 特点 |
+|---|---|---|---|
+| 控制台 | `CONSOLE` | 标准输出（stdout） | 支持 ANSI 彩色高亮，便于开发阶段快速定位日志级别 |
+| 文件 | `FILE` | `logs/home-pilot.log` | 纯文本格式，按天+大小切割，便于生产环境日志采集与归档 |
+
+### 7\.5\.2 日志格式定义
+
+**控制台日志格式（彩色）：**
+
+```plain text
+%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %highlight(%-5level) %cyan(%logger{40}:%L) - %msg%n
+```
+
+示例输出：
+
+```plain text
+2026-08-08 10:30:15.123 [http-nio-8080-exec-1] INFO  com.dboat.iot.api.DeviceController:45 - [API] GET /api/device/list | Response: {...} | Elapsed: 32ms
+```
+
+**文件日志格式（纯文本）：**
+
+```plain text
+%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{40}:%L - %msg%n
+```
+
+示例输出：
+
+```plain text
+2026-08-08 10:30:15.123 [http-nio-8080-exec-1] INFO  com.dboat.iot.api.DeviceController:45 - [API] GET /api/device/list | Response: {...} | Elapsed: 32ms
+```
+
+### 7\.5\.3 格式字段说明
+
+| 字段 | 说明 |
+|---|---|
+| `%d{yyyy-MM-dd HH:mm:ss.SSS}` | 时间戳，精确到毫秒 |
+| `[%thread]` | 线程名称 |
+| `%-5level` | 日志级别，左对齐占 5 字符（控制台带颜色高亮） |
+| `%logger{40}:%L` | 类名（最长 40 字符缩写）加行号 |
+| `%msg` | 日志消息内容 |
+| `%n` | 换行符 |
+
+### 7\.5\.4 日志文件滚动策略
+
+| 配置项 | 值 | 说明 |
+|---|---|---|
+| 当前日志文件 | `logs/home-pilot.log` | 正在写入的日志文件 |
+| 滚动策略 | 按天 + 按大小 | 文件名格式：`home-pilot.yyyy-MM-dd.{序号}.log` |
+| 单文件大小上限 | 100MB | 超过后自动切割生成新文件 |
+| 历史保留天数 | 5 天 | 超过 5 天的日志自动清理 |
+| 总大小上限 | 2GB | 所有日志文件总大小不超过 2GB |
+
+### 7\.5\.5 第三方包日志降噪
+
+为避免第三方库输出大量冗余日志干扰业务日志，对以下包进行日志级别控制：
+
+| 包名 | 日志级别 | 说明 |
+|---|---|---|
+| `org.apache.tomcat` | WARN | 降低 Tomcat 容器日志输出 |
+| `io.netty` | WARN | 降低 Netty 网络框架日志输出 |
+| `com.influxdb` | INFO | InfluxDB 客户端日志，保留关键操作信息 |
+| `org.eclipse.paho` | INFO | MQTT 客户端日志，保留连接与消息关键信息 |
+| `org.springframework` | INFO | Spring 框架日志，保留启动与配置关键信息 |
+
+## 7\.6 InfluxDB 日志打印规范
+
+项目通过 `InfluxDBConfig` 配置类集成 OkHttp `HttpLoggingInterceptor`，实现 InfluxDB 操作（写入、查询）的 HTTP 请求日志输出，便于开发阶段调试与问题排查。
+
+### 7\.6\.1 日志输出机制
+
+- **实现方式**：在创建 `InfluxDBClient` 时，通过自定义 `OkHttpClient` 添加 `HttpLoggingInterceptor` 拦截器，拦截所有 InfluxDB HTTP 请求并输出日志。
+- **日志前缀**：所有 InfluxDB HTTP 日志统一以 `[InfluxDB Http]` 为前缀，便于日志检索与过滤。
+- **日志输出通道**：通过 SLF4J 的 `log.info()` 输出，纳入项目统一日志管理。
+
+### 7\.6\.2 日志级别配置
+
+通过 `application-{profile}.yml` 中的 `influxdb.log-level` 配置项控制日志详细程度：
+
+| 日志级别 | 输出内容 | 适用场景 |
+|---|---|---|
+| `NONE` | 不输出任何日志 | 生产环境（性能优先） |
+| `BASIC` | 仅输出请求方法、URL、状态码、耗时 | 生产环境（基础监控） |
+| `HEADERS` | 输出请求头、响应头信息 | 调试阶段（排查认证等问题） |
+| `BODY` | 输出完整请求体与响应体（含 Flux 查询脚本） | 开发环境（完整调试） |
+
+### 7\.6\.3 环境配置建议
+
+| 环境 | log-level 配置 | 说明 |
+|---|---|---|
+| 本地开发（local） | `BODY` | 输出完整 Flux 查询脚本与写入数据，便于调试 |
+| 本地联调（local-vm） | `BODY` | 联调阶段输出完整日志，便于排查数据问题 |
+| 生产环境 | `BASIC` 或 `NONE` | 减少日志量，保障系统性能 |
+
+### 7\.6\.4 容错机制
+
+- 日志级别配置错误时（如填写了非标准值），系统自动回退至 `BASIC` 级别，并通过 `log.warn()` 输出配置错误提示，避免因配置异常导致服务启动失败。
+
+### 7\.6\.5 日志示例
+
+开发环境（`BODY` 级别）典型日志输出：
+
+```plain text
+2026-08-08 10:30:15.200 [http-nio-8080-exec-2] INFO  c.d.i.config.InfluxDBConfig:32 - [InfluxDB Http] --> POST http://localhost:8086/api/v2/write?org=iot_demo&bucket=sensor_data
+2026-08-08 10:30:15.205 [http-nio-8080-exec-2] INFO  c.d.i.config.InfluxDBConfig:32 - [InfluxDB Http] sensor,device_id=esp32s3_001 temp=24.6,humi=58.2,press=101325i 1754208888000000000
+2026-08-08 10:30:15.210 [http-nio-8080-exec-2] INFO  c.d.i.config.InfluxDBConfig:32 - [InfluxDB Http] <-- 204 No Content (10ms)
+```
+
 > （注：部分内容可能由 AI 生成）

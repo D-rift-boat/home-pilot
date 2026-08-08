@@ -28,7 +28,7 @@ public class InfluxDBUtils {
 
     public InfluxDBUtils(InfluxDBClient influxDBClient, InfluxDBConfig influxDBConfig) {
         this.influxDBClient = influxDBClient;
-        this.org = influxDBConfig.getOrg();
+        this.org = influxDBConfig.getOrgName();
     }
 
     /**

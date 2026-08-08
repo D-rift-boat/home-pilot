@@ -114,3 +114,9 @@ spring-boot-devtools.jar
 .~lock.*
 hs_err_pid*
 replay_pid*
+
+==================================
+# 13. 自定义文件 / Custom files
+# =============================
+.qoderignore
+.qoder
