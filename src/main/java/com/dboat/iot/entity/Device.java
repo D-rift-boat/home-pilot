@@ -6,7 +6,7 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 /**
- * 设备资产实体 —— 对应 MySQL 表 iot_device
+ * 设备信息实体 —— 对应 MySQL 表 device_info
  * <p>
  * 存储设备的静态元数据属性（低频修改），如设备标识、名称、型号、固件版本等。
  * 设备的实时在线状态存储在 Redis 中（参见 {@link com.dboat.iot.utils.DeviceStateStore}），
@@ -16,7 +16,7 @@ import java.time.LocalDateTime;
  * @author dboat
  */
 @Data
-@TableName("iot_device")
+@TableName("device_info")
 public class Device {
 
     /**

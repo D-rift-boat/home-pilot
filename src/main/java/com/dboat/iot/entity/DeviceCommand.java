@@ -6,7 +6,7 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 /**
- * 设备指令实体 —— 对应 MySQL 表 iot_device_command
+ * 设备指令实体 —— 对应 MySQL 表 device_command
  * <p>
  * 存储后端向设备下发的控制指令记录，每条指令通过 MQTT 主题 device/command/{device_id} 发送到设备。
  * 指令状态流转：0(待下发) → 1(已下发) → 2(执行成功) / 3(执行失败)
@@ -15,7 +15,7 @@ import java.time.LocalDateTime;
  * @author dboat
  */
 @Data
-@TableName("iot_device_command")
+@TableName("device_command")
 public class DeviceCommand {
 
     /**

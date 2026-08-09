@@ -3,7 +3,7 @@ package com.dboat.iot.mqtt;
 import com.alibaba.fastjson2.JSONObject;
 import com.dboat.iot.entity.SensorData;
 import com.dboat.iot.enums.SensorStatusEnum;
-import com.dboat.iot.service.DeviceAlarmLogService;
+import com.dboat.iot.service.DeviceLogService;
 import com.dboat.iot.service.DeviceService;
 import com.dboat.iot.service.SensorDataService;
 import com.dboat.iot.utils.DeviceStateStore;
@@ -61,8 +61,8 @@ public class MqttMessageHandler {
     private final DeviceService deviceService;
     /** 传感器数据服务，用于异步写入 InfluxDB */
     private final SensorDataService sensorDataService;
-    /** 设备告警日志服务，用于触发和保存告警 */
-    private final DeviceAlarmLogService deviceAlarmLogService;
+    /** 设备日志服务，用于记录设备上下线、异常等事件 */
+    private final DeviceLogService deviceLogService;
     /** Redis 设备状态存储工具，用于刷新设备实时状态 */
     private final DeviceStateStore deviceStateStore;
 
@@ -72,18 +72,18 @@ public class MqttMessageHandler {
      * @param mqttClientManager    MQTT 客户端管理器（延迟注入）
      * @param deviceService        设备资产服务
      * @param sensorDataService    传感器数据服务
-     * @param deviceAlarmLogService 告警日志服务
+     * @param deviceLogService     设备日志服务
      * @param deviceStateStore     Redis 状态存储工具
      */
     public MqttMessageHandler(@Lazy MqttClientManager mqttClientManager,
                                DeviceService deviceService,
                                SensorDataService sensorDataService,
-                               DeviceAlarmLogService deviceAlarmLogService,
+                               DeviceLogService deviceLogService,
                                DeviceStateStore deviceStateStore) {
         this.mqttClientManager = mqttClientManager;
         this.deviceService = deviceService;
         this.sensorDataService = sensorDataService;
-        this.deviceAlarmLogService = deviceAlarmLogService;
+        this.deviceLogService = deviceLogService;
         this.deviceStateStore = deviceStateStore;
     }
 
@@ -192,8 +192,8 @@ public class MqttMessageHandler {
             detail.put("description", alarmDesc.toString().trim());
             detail.put("raw_payload", rawPayload);
 
-            deviceAlarmLogService.triggerSensorFaultAlarm(deviceId, detail.toJSONString());
-            log.warn("Sensor fault alarm triggered for device [{}]: {}", deviceId, alarmDesc);
+            deviceLogService.logDeviceAbnormal(deviceId, sensorStatus, alarmDesc.toString().trim(), detail.toJSONString());
+            log.warn("Sensor fault log recorded for device [{}]: {}", deviceId, alarmDesc);
         }
     }
 
@@ -214,24 +214,24 @@ public class MqttMessageHandler {
         // 1. 更新 Redis 在线状态为 OFFLINE
         deviceStateStore.setDeviceOffline(deviceId);
 
-        // 2. 从 InfluxDB 查询离线前最后一条传感器数据作为异常上下文
-        String alarmContext = buildOfflineAlarmContext(deviceId);
+        // 2. 从 InfluxDB 查询离线前最后一条传感器数据作为离线上下文
+        String offlineContext = buildOfflineContext(deviceId);
 
-        // 3. 触发设备离线告警
-        deviceAlarmLogService.triggerDeviceOfflineAlarm(deviceId, alarmContext);
+        // 3. 记录设备离线日志
+        deviceLogService.logDeviceOffline(deviceId, offlineContext);
     }
 
     /**
-     * 构建离线告警上下文信息
+     * 构建离线日志上下文信息
      * <p>
      * 从 InfluxDB 查询设备离线前最后一条传感器数据，
-     * 作为离线告警的附加上下文（最后活跃时间、传感器状态、温湿度等）。
+     * 作为离线日志的附加上下文（最后活跃时间、传感器状态、温湿度等）。
      * </p>
      *
      * @param deviceId 设备ID
-     * @return JSON 格式的告警上下文，查询失败时返回 null
+     * @return JSON 格式的离线上下文，查询失败时返回 null
      */
-    private String buildOfflineAlarmContext(String deviceId) {
+    private String buildOfflineContext(String deviceId) {
         try {
             SensorData lastData = sensorDataService.getLatestSensorDataRaw(deviceId);
             if (lastData != null) {
