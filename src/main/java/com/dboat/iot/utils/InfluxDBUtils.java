@@ -23,6 +23,8 @@ public class InfluxDBUtils {
 
     private static final Logger log = LoggerFactory.getLogger(InfluxDBUtils.class);
 
+    private static final String MEASUREMENT = "sensor_telemetry";
+
     private final InfluxDBClient influxDBClient;
     private final String org;
 
@@ -32,19 +34,24 @@ public class InfluxDBUtils {
     }
 
     /**
-     * Write sensor data to InfluxDB
+     * Write sensor telemetry data to InfluxDB
      */
     public void writeSensorData(String bucket, SensorData sensorData) {
-        Point point = Point.measurement("sensor")
-                .addTag("device", sensorData.getDeviceId())
-                .addField("temp", sensorData.getTemp())
-                .addField("humi", sensorData.getHumi())
-                .addField("press", sensorData.getPress())
+        Point point = Point.measurement(MEASUREMENT)
+                .addTag("device_id", sensorData.getDeviceId())
+                .addField("temperature_aht", toDouble(sensorData.getTemperatureAht()))
+                .addField("temperature_bmp", toDouble(sensorData.getTemperatureBmp()))
+                .addField("humidity", toDouble(sensorData.getHumidity()))
+                .addField("pressure_hpa", toDouble(sensorData.getPressureHpa()))
+                .addField("altitude_m", toDouble(sensorData.getAltitudeM()))
+                .addField("sensor_status", safeInt(sensorData.getSensorStatus()))
+                .addField("aht20_status", safeInt(sensorData.getAht20Status()))
+                .addField("bmp280_status", safeInt(sensorData.getBmp280Status()))
                 .time(sensorData.getReportTime(), WritePrecision.NS);
 
         WriteApiBlocking writeApi = influxDBClient.getWriteApiBlocking();
         writeApi.writePoint(bucket, org, point);
-        log.debug("Written sensor data point for device: {}", sensorData.getDeviceId());
+        log.debug("Written sensor telemetry point for device: {}", sensorData.getDeviceId());
     }
 
     /**
@@ -54,10 +61,10 @@ public class InfluxDBUtils {
         String flux = String.format(
                 "from(bucket: \"%s\") " +
                 "|> range(start: %s, stop: %s) " +
-                "|> filter(fn: (r) => r[\"_measurement\"] == \"sensor\") " +
-                "|> filter(fn: (r) => r[\"device\"] == \"%s\") " +
+                "|> filter(fn: (r) => r[\"_measurement\"] == \"%s\") " +
+                "|> filter(fn: (r) => r[\"device_id\"] == \"%s\") " +
                 "|> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")",
-                bucket, start.toString(), end.toString(), deviceId
+                bucket, start.toString(), end.toString(), MEASUREMENT, deviceId
         );
 
         QueryApi queryApi = influxDBClient.getQueryApi();
@@ -66,18 +73,7 @@ public class InfluxDBUtils {
         List<SensorData> result = new ArrayList<>();
         for (FluxTable table : tables) {
             for (FluxRecord record : table.getRecords()) {
-                SensorData data = new SensorData();
-                data.setDeviceId(deviceId);
-                data.setReportTime(record.getTime());
-                if (record.getValueByKey("temp") != null) {
-                    data.setTemp(new BigDecimal(record.getValueByKey("temp").toString()));
-                }
-                if (record.getValueByKey("humi") != null) {
-                    data.setHumi(new BigDecimal(record.getValueByKey("humi").toString()));
-                }
-                if (record.getValueByKey("press") != null) {
-                    data.setPress(((Number) record.getValueByKey("press")).longValue());
-                }
+                SensorData data = mapRecordToSensorData(record, deviceId);
                 result.add(data);
             }
         }
@@ -91,11 +87,11 @@ public class InfluxDBUtils {
         String flux = String.format(
                 "from(bucket: \"%s\") " +
                 "|> range(start: -30d) " +
-                "|> filter(fn: (r) => r[\"_measurement\"] == \"sensor\") " +
-                "|> filter(fn: (r) => r[\"device\"] == \"%s\") " +
+                "|> filter(fn: (r) => r[\"_measurement\"] == \"%s\") " +
+                "|> filter(fn: (r) => r[\"device_id\"] == \"%s\") " +
                 "|> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\") " +
                 "|> last()",
-                bucket, deviceId
+                bucket, MEASUREMENT, deviceId
         );
 
         QueryApi queryApi = influxDBClient.getQueryApi();
@@ -104,22 +100,55 @@ public class InfluxDBUtils {
         for (FluxTable table : tables) {
             List<FluxRecord> records = table.getRecords();
             if (!records.isEmpty()) {
-                FluxRecord record = records.getFirst();
-                SensorData data = new SensorData();
-                data.setDeviceId(deviceId);
-                data.setReportTime(record.getTime());
-                if (record.getValueByKey("temp") != null) {
-                    data.setTemp(new BigDecimal(record.getValueByKey("temp").toString()));
-                }
-                if (record.getValueByKey("humi") != null) {
-                    data.setHumi(new BigDecimal(record.getValueByKey("humi").toString()));
-                }
-                if (record.getValueByKey("press") != null) {
-                    data.setPress(((Number) record.getValueByKey("press")).longValue());
-                }
-                return data;
+                return mapRecordToSensorData(records.getFirst(), deviceId);
             }
         }
         return null;
+    }
+
+    private SensorData mapRecordToSensorData(FluxRecord record, String deviceId) {
+        SensorData data = new SensorData();
+        data.setDeviceId(deviceId);
+        data.setReportTime(record.getTime());
+
+        if (record.getValueByKey("temperature_aht") != null) {
+            data.setTemperatureAht(toBigDecimal(record.getValueByKey("temperature_aht")));
+        }
+        if (record.getValueByKey("temperature_bmp") != null) {
+            data.setTemperatureBmp(toBigDecimal(record.getValueByKey("temperature_bmp")));
+        }
+        if (record.getValueByKey("humidity") != null) {
+            data.setHumidity(toBigDecimal(record.getValueByKey("humidity")));
+        }
+        if (record.getValueByKey("pressure_hpa") != null) {
+            data.setPressureHpa(toBigDecimal(record.getValueByKey("pressure_hpa")));
+        }
+        if (record.getValueByKey("altitude_m") != null) {
+            data.setAltitudeM(toBigDecimal(record.getValueByKey("altitude_m")));
+        }
+        if (record.getValueByKey("sensor_status") != null) {
+            data.setSensorStatus(((Number) record.getValueByKey("sensor_status")).intValue());
+        }
+        if (record.getValueByKey("aht20_status") != null) {
+            data.setAht20Status(((Number) record.getValueByKey("aht20_status")).intValue());
+        }
+        if (record.getValueByKey("bmp280_status") != null) {
+            data.setBmp280Status(((Number) record.getValueByKey("bmp280_status")).intValue());
+        }
+        return data;
+    }
+
+    private double toDouble(BigDecimal value) {
+        return value != null ? value.doubleValue() : 0.0;
+    }
+
+    private int safeInt(Integer value) {
+        return value != null ? value : 0;
+    }
+
+    private BigDecimal toBigDecimal(Object value) {
+        if (value == null) return null;
+        if (value instanceof BigDecimal bd) return bd;
+        return new BigDecimal(value.toString());
     }
 }

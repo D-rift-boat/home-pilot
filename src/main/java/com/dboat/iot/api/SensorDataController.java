@@ -12,25 +12,42 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
+/**
+ * 传感器数据查询 Controller
+ * <p>
+ * 提供传感器遥测数据的历史查询和最新值查询 REST API。
+ * 数据来源于 InfluxDB 时序数据库。
+ * </p>
+ *
+ * @author dboat
+ */
 @RestController
 @RequestMapping("/api/sensorData")
-@Tag(name = "Sensor Data", description = "Sensor data query APIs")
+@Tag(name = "Sensor Data", description = "传感器数据查询 API")
 public class SensorDataController {
 
+    /** 传感器数据业务服务 */
     private final SensorDataService sensorDataService;
 
+    /** 构造器注入传感器数据服务 */
     public SensorDataController(SensorDataService sensorDataService) {
         this.sensorDataService = sensorDataService;
     }
 
+    /**
+     * 按时间范围查询传感器历史数据
+     */
     @PostMapping("/history")
-    @Operation(summary = "Query history data", description = "Query sensor data by device ID and time range")
+    @Operation(summary = "历史数据查询", description = "按设备ID和时间范围查询传感器遥测数据")
     public Result<List<SensorDataRespDTO>> queryHistory(@Valid @RequestBody SensorDataQueryReqDTO request) {
         return Result.ok(sensorDataService.querySensorData(request));
     }
 
+    /**
+     * 获取设备最新一条传感器上报数据
+     */
     @PostMapping("/latest")
-    @Operation(summary = "Get latest data", description = "Get the latest sensor data for a device")
+    @Operation(summary = "最新数据查询", description = "获取指定设备的最新传感器数据")
     public Result<SensorDataRespDTO> getLatest(@Valid @RequestBody SensorDataLatestReqDTO request) {
         SensorDataRespDTO data = sensorDataService.getLatestSensorData(request);
         return Result.ok(data);

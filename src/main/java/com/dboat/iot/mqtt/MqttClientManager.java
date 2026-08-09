@@ -9,10 +9,18 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
+import java.util.List;
+
 @Component
 public class MqttClientManager {
 
     private static final Logger log = LoggerFactory.getLogger(MqttClientManager.class);
+
+    /**
+     * EMQX 设备断连事件主题（通配符订阅所有节点的所有客户端断连）
+     */
+    private static final String EMQX_DISCONNECT_TOPIC = "$SYS/brokers/+/clients/+/disconnected";
 
     private final MqttConfig mqttConfig;
     private final MqttConnectOptions mqttConnectOptions;
@@ -64,21 +72,31 @@ public class MqttClientManager {
     }
 
     private void subscribeTopics() {
+        // 合并配置中的订阅主题和系统事件主题
+        List<String> allTopics = new ArrayList<>();
+        List<Integer> allQos = new ArrayList<>();
+
+        // 配置中的业务主题
         String[] topics = mqttConfig.getSubscribeTopics();
         int[] qosLevels = mqttConfig.getSubscribeQos();
         if (topics != null && topics.length > 0) {
-            try {
-                if (qosLevels == null || qosLevels.length != topics.length) {
-                    qosLevels = new int[topics.length];
-                    for (int i = 0; i < qosLevels.length; i++) {
-                        qosLevels[i] = 1;
-                    }
-                }
-                mqttClient.subscribe(topics, qosLevels);
-                log.info("Subscribed to MQTT topics: {}", String.join(", ", topics));
-            } catch (MqttException e) {
-                log.error("Failed to subscribe MQTT topics: {}", e.getMessage(), e);
+            for (int i = 0; i < topics.length; i++) {
+                allTopics.add(topics[i]);
+                allQos.add(qosLevels != null && i < qosLevels.length ? qosLevels[i] : 1);
             }
+        }
+
+        // EMQX 系统事件主题（设备断连感知）
+        allTopics.add(EMQX_DISCONNECT_TOPIC);
+        allQos.add(1);
+
+        try {
+            String[] topicArr = allTopics.toArray(new String[0]);
+            int[] qosArr = allQos.stream().mapToInt(Integer::intValue).toArray();
+            mqttClient.subscribe(topicArr, qosArr);
+            log.info("Subscribed to MQTT topics: {}", String.join(", ", topicArr));
+        } catch (MqttException e) {
+            log.error("Failed to subscribe MQTT topics: {}", e.getMessage(), e);
         }
     }
 

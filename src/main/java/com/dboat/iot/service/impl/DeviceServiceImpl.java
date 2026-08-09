@@ -7,18 +7,42 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.dboat.iot.dto.request.*;
 import com.dboat.iot.dto.response.DeviceRespDTO;
 import com.dboat.iot.entity.Device;
+import com.dboat.iot.enums.DeviceOnlineStatusEnum;
 import com.dboat.iot.exception.BusinessException;
 import com.dboat.iot.mapper.DeviceMapper;
 import com.dboat.iot.service.DeviceService;
+import com.dboat.iot.utils.DeviceStateStore;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+/**
+ * 设备资产业务服务实现类
+ * <p>
+ * 实现设备 CRUD、自动注册、状态管理等业务逻辑。
+ * 设备在线状态统一由 Redis 维护（通过 {@link com.dboat.iot.utils.DeviceStateStore}），
+ * 查询接口返回时从 Redis 实时获取在线状态填充到响应 DTO 中。
+ * </p>
+ *
+ * @author dboat
+ */
 @Service
 public class DeviceServiceImpl extends ServiceImpl<DeviceMapper, Device> implements DeviceService {
 
+    /** Redis 设备状态存储工具 */
+    private final DeviceStateStore deviceStateStore;
+
+    /** 构造器注入 Redis 状态存储 */
+    public DeviceServiceImpl(DeviceStateStore deviceStateStore) {
+        this.deviceStateStore = deviceStateStore;
+    }
+
+    /**
+     * 手动创建设备
+     * <p>先检查 device_id 是否已存在，存在则抛出业务异常</p>
+     */
     @Override
     public DeviceRespDTO createDevice(DeviceCreateReqDTO request) {
-        // Check if device already exists
+        // 检查设备是否已存在
         LambdaQueryWrapper<Device> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(Device::getDeviceId, request.getDeviceId());
         if (this.count(wrapper) > 0) {
@@ -31,12 +55,14 @@ public class DeviceServiceImpl extends ServiceImpl<DeviceMapper, Device> impleme
         device.setDeviceModel(request.getDeviceModel());
         device.setFirmwareVersion(request.getFirmwareVersion());
         device.setLocation(request.getLocation());
-        device.setStatus(0); // Default offline
         this.save(device);
 
         return toResponse(device);
     }
 
+    /**
+     * 更新设备静态属性（仅更新非空字段）
+     */
     @Override
     public DeviceRespDTO updateDevice(DeviceUpdateReqDTO request) {
         Device device = this.getById(request.getId());
@@ -56,14 +82,17 @@ public class DeviceServiceImpl extends ServiceImpl<DeviceMapper, Device> impleme
         if (StringUtils.hasText(request.getLocation())) {
             device.setLocation(request.getLocation());
         }
-        if (request.getStatus() != null) {
-            device.setStatus(request.getStatus());
+        if (StringUtils.hasText(request.getProductId())) {
+            device.setProductId(request.getProductId());
         }
         this.updateById(device);
 
         return toResponse(device);
     }
 
+    /**
+     * 逻辑删除设备，同时清理 Redis 中的设备状态缓存
+     */
     @Override
     public void deleteDevice(DeviceDeleteReqDTO request) {
         Device device = this.getById(request.getId());
@@ -71,6 +100,8 @@ public class DeviceServiceImpl extends ServiceImpl<DeviceMapper, Device> impleme
             throw new BusinessException("Device not found: " + request.getId());
         }
         this.removeById(request.getId()); // Logical delete via @TableLogic
+        // 同时清理 Redis 状态
+        deviceStateStore.removeDeviceState(device.getDeviceId());
     }
 
     @Override
@@ -105,9 +136,6 @@ public class DeviceServiceImpl extends ServiceImpl<DeviceMapper, Device> impleme
         if (StringUtils.hasText(request.getDeviceModel())) {
             wrapper.eq(Device::getDeviceModel, request.getDeviceModel());
         }
-        if (request.getStatus() != null) {
-            wrapper.eq(Device::getStatus, request.getStatus());
-        }
         wrapper.orderByDesc(Device::getUpdateTime);
 
         Page<Device> page = new Page<>(request.getPageNum(), request.getPageSize());
@@ -115,6 +143,10 @@ public class DeviceServiceImpl extends ServiceImpl<DeviceMapper, Device> impleme
         return devicePage.convert(this::toResponse);
     }
 
+    /**
+     * MQTT 数据上报时自动注册设备（幂等操作）
+     * <p>设备不存在则创建，已存在则直接返回</p>
+     */
     @Override
     public Device autoRegister(String deviceId) {
         LambdaQueryWrapper<Device> wrapper = new LambdaQueryWrapper<>();
@@ -124,26 +156,26 @@ public class DeviceServiceImpl extends ServiceImpl<DeviceMapper, Device> impleme
             device = new Device();
             device.setDeviceId(deviceId);
             device.setDeviceName(deviceId);
-            device.setStatus(1);
             this.save(device);
-        } else {
-            device.setStatus(1);
-            this.updateById(device);
         }
         return device;
     }
 
     @Override
     public void updateStatus(String deviceId, int status) {
-        LambdaQueryWrapper<Device> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(Device::getDeviceId, deviceId);
-        Device device = this.getOne(wrapper);
-        if (device != null) {
-            device.setStatus(status);
-            this.updateById(device);
+        // 设备在线状态统一由 Redis 管理，此方法保留用于兼容
+        // 如需更新，直接操作 Redis
+        if (status == DeviceOnlineStatusEnum.OFFLINE.getCode()) {
+            deviceStateStore.setDeviceOffline(deviceId);
+        } else {
+            deviceStateStore.refreshDeviceState(deviceId, 1, 1, 1);
         }
     }
 
+    /**
+     * 实体转响应 DTO（内部方法）
+     * <p>从 Redis 获取实时在线状态填充到响应中</p>
+     */
     private DeviceRespDTO toResponse(Device device) {
         DeviceRespDTO response = new DeviceRespDTO();
         response.setId(device.getId());
@@ -152,9 +184,12 @@ public class DeviceServiceImpl extends ServiceImpl<DeviceMapper, Device> impleme
         response.setDeviceModel(device.getDeviceModel());
         response.setFirmwareVersion(device.getFirmwareVersion());
         response.setLocation(device.getLocation());
-        response.setStatus(device.getStatus());
         response.setCreateTime(device.getCreateTime());
         response.setUpdateTime(device.getUpdateTime());
+
+        // 从 Redis 读取实时在线状态
+        DeviceOnlineStatusEnum onlineStatus = deviceStateStore.getOnlineStatus(device.getDeviceId());
+        response.setStatus(onlineStatus.getCode());
         return response;
     }
 }
