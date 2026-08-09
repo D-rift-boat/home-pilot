@@ -93,7 +93,7 @@ public class MqttMessageHandler {
      * 根据主题前缀将消息分发到对应的处理方法：
      * <ul>
      *   <li>iot/sensor/upload/* → 传感器数据处理</li>
-     *   <li>$SYS/brokers/*/clients/*/disconnected → 设备断连处理</li>
+     *   <li>$SYS/brokers/clients/disconnected → 设备断连处理</li>
      * </ul>
      * </p>
      *
