@@ -51,6 +51,11 @@ public class MqttMessageHandler {
     private static final String TOPIC_CLIENT_DISCONNECTED = "$SYS/brokers/+/clients/+/disconnected";
 
     /**
+     * EMQX 设备状态事件主题（通配符匹配所有 Broker 节点的所有客户端断连）
+     */
+    private static final String TOPIC_CLIENT_STAUTS_PREFIX = "iot/device/status/";
+
+    /**
      * 设备指令下发主题前缀（完整主题: device/command/{device_id}）
      */
     private static final String TOPIC_COMMAND_PREFIX = "device/command/";
@@ -109,6 +114,8 @@ public class MqttMessageHandler {
                 handleSensorUpload(topic, payload);
             } else if (topic.matches("\\$SYS/brokers/[^/]+/clients/[^/]+/disconnected")) {
                 handleDeviceDisconnected(topic, payload);
+            } else if (topic.startsWith(TOPIC_CLIENT_STAUTS_PREFIX)) {
+                log.info("device online: {}", topic);
             } else {
                 log.warn("Unhandled MQTT topic: {}", topic);
             }
@@ -149,7 +156,7 @@ public class MqttMessageHandler {
         }
 
         // ========== 流式告警计算（In-Flight Alerting，数据入库前执行） ==========
-        checkAndTriggerSensorAlarm(deviceId, sensorStatus, aht20Status, bmp280Status, payload);
+        //checkAndTriggerSensorAlarm(deviceId, sensorStatus, aht20Status, bmp280Status, payload);
 
         // ========== 刷新 Redis 设备实时状态 ==========
         deviceStateStore.refreshDeviceState(deviceId, sensorStatus, aht20Status, bmp280Status);

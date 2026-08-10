@@ -51,4 +51,6 @@
     <logger name="com.influxdb" level="INFO"/>
     <logger name="org.eclipse.paho" level="INFO"/>
     <logger name="org.springframework" level="INFO"/>
+    <logger name="org.mybatis" level="DEBUG"/>
+    <logger name="org.apache.ibatis" level="DEBUG"/>
 </configuration>

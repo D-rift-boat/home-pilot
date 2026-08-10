@@ -8,14 +8,14 @@ spring:
     active: local-vm
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://localhost:3306/iot_device?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    url: jdbc:mysql://localhost:3306/iot?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
     username: root
     password: root
 
 # MyBatis-Plus
 mybatis-plus:
   mapper-locations: classpath:mapper/*.xml
-  type-aliases-package: com.dboat.iot.device.entity
+  type-aliases-package: com.dboat.iot.entity
   configuration:
     log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
     map-underscore-to-camel-case: true
@@ -37,7 +37,8 @@ mqtt:
   automatic-reconnect: true
   clean-session: true
   subscribe-topics:
-    - device/data/upload
+    - iot/sensor/upload/+
+    - iot/device/status/+
   subscribe-qos:
     - 1
 
@@ -61,5 +62,9 @@ springdoc:
 # Logging
 logging:
   level:
-    com.dboat.iot.device: DEBUG
+    com.dboat.iot: DEBUG
     org.eclipse.paho: INFO
+    # 打印mapper接口所在包日志，会输出：执行SQL、参数、返回条数
+    com.dboat.iot.mapper: DEBUG
+    # 核心：mybatis底层日志，展示完整SQL语句
+    org.mybatis: DEBUG
