@@ -11,6 +11,51 @@ spring:
     url: jdbc:mysql://localhost:3306/iot?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
     username: root
     password: root
+    # ========== HikariCP 连接池生产级配置 ==========
+    hikari:
+      # 连接池名称（便于监控和日志识别）
+      pool-name: home-pilot-hikari
+      # 最大连接数（根据 MySQL max_connections 和业务并发量调整）
+      maximum-pool-size: 20
+      # 最小空闲连接数（保持预热，避免突发流量时冷启动建连开销）
+      minimum-idle: 5
+      # 获取连接最大等待时间（超时抛 SQLException）
+      connection-timeout: 30000
+      # 空闲连接存活最大时间（MySQL wait_timeout 必须大于此值，建议 MySQL 侧设 600s+）
+      idle-timeout: 600000
+      # 连接最大生命周期（必须小于 MySQL wait_timeout，防止使用已被服务端关闭的死连接）
+      max-lifetime: 1800000
+      # 连接有效性检测 SQL（MySQL 推荐用此轻量级语句）
+      connection-test-query: SELECT 1
+      # 自动提交行为
+      auto-commit: true
+      # 连接泄漏检测阈值（超过此时间未归还的连接视为泄漏，0=禁用）
+      leak-detection-threshold: 60000
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      # password:
+      password: 123
+      database: 0
+      # 命令响应超时（读取数据时最大等待时间）
+      timeout: 3000ms
+      # TCP 连接建立超时（握手阶段）
+      connect-timeout: 3000ms
+      # 客户端名称，便于在 Redis INFO clients 中识别来源
+      client-name: home-pilot
+      lettuce:
+        pool:
+          # 连接池最大连接数（根据业务并发量调整，IoT 场景设备状态读写频繁）
+          max-active: 16
+          # 最大空闲连接（长期保持的可回收连接数）
+          max-idle: 8
+          # 最小空闲连接（预热保活，避免突发流量时冷启动建连）
+          min-idle: 2
+          # 从连接池获取连接的最大等待时间，超时抛异常
+          max-wait: 2000ms
+        # 关闭超时：优雅关闭连接时等待命令完成的最大时间
+        shutdown-timeout: 200ms
 
 # MyBatis-Plus
 mybatis-plus:
