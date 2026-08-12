@@ -8,6 +8,7 @@ import com.dboat.iot.dto.request.CommandSendReqDTO;
 import com.dboat.iot.dto.response.CommandRespDTO;
 import com.dboat.iot.entity.DeviceCommand;
 import com.dboat.iot.exception.BusinessException;
+import com.dboat.iot.utils.JsonUtils;
 import com.dboat.iot.mapper.DeviceCommandMapper;
 import com.dboat.iot.mqtt.MqttMessageHandler;
 import com.dboat.iot.service.DeviceCommandService;
@@ -37,20 +38,32 @@ public class DeviceCommandServiceImpl extends ServiceImpl<DeviceCommandMapper, D
         this.mqttMessageHandler = mqttMessageHandler;
     }
 
+    /** 默认指令超时时间（毫秒） */
+    private static final long DEFAULT_TIMEOUT_MS = 5000;
+
     /**
-     * 下发控制指令：先保存记录（状态=待下发），再通过 MQTT 发送，发送成功则更新状态=已下发
+     * 下发控制指令：先保存记录（状态=待下发），再通过 MQTT 发送标准 DOWN_CMD 格式指令
      */
     @Override
     public CommandRespDTO sendCommand(CommandSendReqDTO request) {
+        // 构建指令记录
         DeviceCommand command = new DeviceCommand();
         command.setDeviceId(request.getDeviceId());
-        command.setCommand(request.getCommand());
+        command.setCmdCode(request.getCmdCode());
+        command.setParams(request.getParams() != null ? JsonUtils.toJSONString(request.getParams()) : null);
+        command.setTimeout(request.getTimeout() != null ? request.getTimeout() : DEFAULT_TIMEOUT_MS);
         command.setStatus(0); // Pending
         this.save(command);
 
-        // Send via MQTT
+        // 通过 MQTT 发送标准 DOWN_CMD 格式指令
         try {
-            mqttMessageHandler.publishCommand(request.getDeviceId(), request.getCommand());
+            String requestId = mqttMessageHandler.publishCommand(
+                    request.getDeviceId(),
+                    request.getCmdCode(),
+                    request.getParams(),
+                    command.getTimeout()
+            );
+            command.setRequestId(requestId);
             command.setStatus(1); // Sent
             this.updateById(command);
         } catch (Exception e) {
@@ -94,7 +107,10 @@ public class DeviceCommandServiceImpl extends ServiceImpl<DeviceCommandMapper, D
         CommandRespDTO response = new CommandRespDTO();
         response.setId(command.getId());
         response.setDeviceId(command.getDeviceId());
-        response.setCommand(command.getCommand());
+        response.setRequestId(command.getRequestId());
+        response.setCmdCode(command.getCmdCode());
+        response.setParams(command.getParams());
+        response.setTimeout(command.getTimeout());
         response.setStatus(command.getStatus());
         response.setCreateTime(command.getCreateTime());
         response.setUpdateTime(command.getUpdateTime());

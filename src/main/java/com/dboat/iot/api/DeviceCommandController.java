@@ -17,7 +17,7 @@ import java.util.List;
  * 设备指令管理 Controller
  * <p>
  * 提供设备控制指令的下发、查询 REST API。
- * 指令通过 MQTT 主题 device/command/{device_id} 发送到设备端。
+ * 指令通过 MQTT 主题 iot/cmd/{deviceId} 以标准 DOWN_CMD 格式发送到设备端。
  * </p>
  *
  * @author dboat

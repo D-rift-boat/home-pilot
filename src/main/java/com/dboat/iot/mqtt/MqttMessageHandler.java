@@ -1,6 +1,8 @@
 package com.dboat.iot.mqtt;
 
 import com.alibaba.fastjson2.JSONObject;
+import com.dboat.iot.dto.mqtt.MqttDownCmdMessage;
+import com.dboat.iot.dto.mqtt.MqttUpDataMessage;
 import com.dboat.iot.entity.SensorData;
 import com.dboat.iot.enums.SensorStatusEnum;
 import com.dboat.iot.service.DeviceLogService;
@@ -14,8 +16,10 @@ import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
-import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
 
 /**
  * MQTT 消息处理器
@@ -28,7 +32,7 @@ import java.time.Instant;
  *   <li>刷新 Redis 设备实时状态</li>
  *   <li>异步写入 InfluxDB 时序数据库</li>
  *   <li>处理设备离线事件，生成离线告警上下文</li>
- *   <li>向设备端下发指令（通过 device/command/{device_id} 主题）</li>
+ *   <li>向设备端下发指令（通过 iot/cmd/{deviceId} 主题，标准 DOWN_CMD 格式）</li>
  * </ul>
  * </p>
  *
@@ -56,9 +60,9 @@ public class MqttMessageHandler {
     private static final String TOPIC_CLIENT_STAUTS_PREFIX = "iot/device/status/";
 
     /**
-     * 设备指令下发主题前缀（完整主题: device/command/{device_id}）
+     * 设备指令下发主题前缀（完整主题: iot/cmd/{deviceId}）
      */
-    private static final String TOPIC_COMMAND_PREFIX = "device/command/";
+    private static final String TOPIC_COMMAND_PREFIX = "iot/cmd/";
 
     /** MQTT 客户端管理器，用于发布指令消息 */
     private final MqttClientManager mqttClientManager;
@@ -125,34 +129,49 @@ public class MqttMessageHandler {
     }
 
     /**
-     * 处理传感器数据上报
+     * 处理传感器数据上报（UP_DATA 标准格式）
+     * <p>
+     * 解析 header + payload 结构：
+     * header 中提取 deviceId、traceId、timestamp 等元数据；
+     * payload 中提取 deviceStatus、sensorStatus、envData 等业务数据。
+     * </p>
      * 流程: 解析JSON → 内存告警计算 → 刷新Redis → 异步写入InfluxDB
      */
     private void handleSensorUpload(String topic, String payload) {
-        JSONObject json = JsonUtils.parseObject(payload);
-        if (json == null) {
-            log.error("Invalid JSON payload: {}", payload);
+        // 使用 Fastjson2 解析为 UP_DATA DTO
+        MqttUpDataMessage msg = JsonUtils.parseObject(payload, MqttUpDataMessage.class);
+        if (msg == null || msg.getHeader() == null || msg.getPayload() == null) {
+            log.error("Invalid UP_DATA payload: {}", payload);
             return;
         }
 
-        String deviceId = json.getString("device_id");
-        if (deviceId == null || deviceId.isEmpty()) {
-            log.error("Missing device_id in payload: {}", payload);
+        MqttUpDataMessage.Header header = msg.getHeader();
+        MqttUpDataMessage.Payload body = msg.getPayload();
+
+        // 校验消息类型
+        if (!"UP_DATA".equals(header.getMsgType())) {
+            log.warn("Unexpected msgType in sensor upload: {}", header.getMsgType());
             return;
         }
+
+        String deviceId = header.getDeviceId();
+        if (deviceId == null || deviceId.isEmpty()) {
+            log.error("Missing deviceId in UP_DATA header: {}", payload);
+            return;
+        }
+
+        log.info("UP_DATA received from device [{}], traceId={}", deviceId, header.getTraceId());
 
         // 自动注册设备（首次上报时自动创建）
         deviceService.autoRegister(deviceId);
 
-        // 解析传感器状态
-        int sensorStatus = 1;
+        // 解析传感器状态（从 payload.sensorStatus 中获取各传感器独立状态）
+        int sensorStatus = body.getDeviceStatus() != null ? body.getDeviceStatus() : 1;
         int aht20Status = 1;
         int bmp280Status = 1;
-        JSONObject sensorDetail = json.getJSONObject("sensor_detail");
-        if (sensorDetail != null) {
-            sensorStatus = sensorDetail.getIntValue("sensor_status", 1);
-            aht20Status = sensorDetail.getIntValue("aht20_status", 1);
-            bmp280Status = sensorDetail.getIntValue("bmp280_status", 1);
+        if (body.getSensorStatus() != null) {
+            aht20Status = body.getSensorStatus().getAht20() != null ? body.getSensorStatus().getAht20() : 1;
+            bmp280Status = body.getSensorStatus().getBmp280() != null ? body.getSensorStatus().getBmp280() : 1;
         }
 
         // ========== 流式告警计算（In-Flight Alerting，数据入库前执行） ==========
@@ -162,9 +181,9 @@ public class MqttMessageHandler {
         deviceStateStore.refreshDeviceState(deviceId, sensorStatus, aht20Status, bmp280Status);
 
         // ========== 异步写入 InfluxDB ==========
-        SensorData sensorData = buildSensorData(deviceId, json, sensorStatus, aht20Status, bmp280Status);
+        SensorData sensorData = buildSensorData(deviceId, body, sensorStatus, aht20Status, bmp280Status);
         sensorDataService.saveSensorData(sensorData);
-        log.info("Processed sensor telemetry from device: {}", deviceId);
+        log.info("Processed UP_DATA from device: {}", deviceId);
     }
 
     /**
@@ -259,24 +278,30 @@ public class MqttMessageHandler {
     }
 
     /**
-     * 根据 JSON 数据构建 SensorData 实体对象
+     * 根据 UP_DATA payload 构建 SensorData 实体对象
      *
-     * @param deviceId      设备ID
-     * @param json          上报的 JSON 数据
+     * @param deviceId      设备ID（从 header 中提取）
+     * @param payload       UP_DATA 消息体
      * @param sensorStatus  传感器整体状态码
      * @param aht20Status   AHT20 温湿度传感器状态码
      * @param bmp280Status  BMP280 气压传感器状态码
      * @return 填充完毕的 SensorData 实体
      */
-    private SensorData buildSensorData(String deviceId, JSONObject json,
+    private SensorData buildSensorData(String deviceId, MqttUpDataMessage.Payload payload,
                                         int sensorStatus, int aht20Status, int bmp280Status) {
         SensorData sensorData = new SensorData();
         sensorData.setDeviceId(deviceId);
-        sensorData.setTemperatureAht(getBigDecimal(json, "temperature_aht"));
-        sensorData.setTemperatureBmp(getBigDecimal(json, "temperature_bmp"));
-        sensorData.setHumidity(getBigDecimal(json, "humidity"));
-        sensorData.setPressureHpa(getBigDecimal(json, "pressure_hpa"));
-        sensorData.setAltitudeM(getBigDecimal(json, "altitude_m"));
+
+        // 从 envData 中提取环境监测数据（驼峰字段，零映射成本）
+        MqttUpDataMessage.EnvData env = payload.getEnvData();
+        if (env != null) {
+            sensorData.setTemperatureAht(env.getTempAht());
+            sensorData.setTemperatureBmp(env.getTempBmp());
+            sensorData.setHumidity(env.getHumidity());
+            sensorData.setPressureHpa(env.getPressureHpa());
+            sensorData.setAltitudeM(env.getAltitude());
+        }
+
         sensorData.setSensorStatus(sensorStatus);
         sensorData.setAht20Status(aht20Status);
         sensorData.setBmp280Status(bmp280Status);
@@ -285,35 +310,49 @@ public class MqttMessageHandler {
     }
 
     /**
-     * 安全地从 JSONObject 中获取 BigDecimal 值
-     *
-     * @param json JSON 对象
-     * @param key  字段名
-     * @return BigDecimal 值，字段不存在时返回 null
-     */
-    private BigDecimal getBigDecimal(JSONObject json, String key) {
-        if (json.containsKey(key)) {
-            return json.getBigDecimal(key);
-        }
-        return null;
-    }
-
-    /**
-     * 向指定设备发布指令消息
+     * 向指定设备发布指令消息（DOWN_CMD 标准格式）
      * <p>
-     * 将指令封装为 JSON 格式（含 command 和 ts 时间戳），
-     * 通过 device/command/{device_id} 主题发送到设备端。
+     * 将指令封装为标准 header + payload JSON 格式：
+     * <ul>
+     *   <li>header: msgType=DOWN_CMD, requestId(UUID), deviceId, timestamp, timeout</li>
+     *   <li>payload: cmdCode, params</li>
+     * </ul>
+     * 通过 iot/cmd/{deviceId} 主题发送到设备端。
      * </p>
      *
      * @param deviceId 目标设备ID
-     * @param command  指令内容字符串
+     * @param cmdCode  指令编码（如 device_restart、sensor_calibrate、light_switch）
+     * @param params   指令参数（可为 null）
+     * @param timeout  指令超时时间（毫秒）
+     * @return requestId 指令唯一ID，用于异步应答匹配
      */
-    public void publishCommand(String deviceId, String command) {
+    public String publishCommand(String deviceId, String cmdCode, Map<String, Object> params, long timeout) {
+        String requestId = UUID.randomUUID().toString();
+
+        // 构建标准 DOWN_CMD 消息
+        MqttDownCmdMessage cmdMsg = new MqttDownCmdMessage();
+
+        // 构建 header
+        MqttDownCmdMessage.Header header = new MqttDownCmdMessage.Header();
+        header.setMsgType("DOWN_CMD");
+        header.setRequestId(requestId);
+        header.setDeviceId(deviceId);
+        header.setTimestamp(System.currentTimeMillis());
+        header.setTimeout(timeout);
+        cmdMsg.setHeader(header);
+
+        // 构建 payload
+        MqttDownCmdMessage.Payload body = new MqttDownCmdMessage.Payload();
+        body.setCmdCode(cmdCode);
+        body.setParams(params != null ? params : new HashMap<>());
+        cmdMsg.setPayload(body);
+
+        // 序列化并发布
         String topic = TOPIC_COMMAND_PREFIX + deviceId;
-        JSONObject payload = new JSONObject();
-        payload.put("command", command);
-        payload.put("ts", System.currentTimeMillis());
-        mqttClientManager.publish(topic, payload.toJSONString(), 1);
-        log.info("Published command to device [{}]: {}", deviceId, command);
+        String jsonPayload = JsonUtils.toJSONString(cmdMsg);
+        mqttClientManager.publish(topic, jsonPayload, 1);
+        log.info("Published DOWN_CMD to device [{}], cmdCode={}, requestId={}", deviceId, cmdCode, requestId);
+
+        return requestId;
     }
 }

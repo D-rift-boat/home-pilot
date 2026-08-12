@@ -79,4 +79,12 @@ public interface DeviceService extends IService<Device> {
      * @param status   状态码（0=离线, 1=在线, 2=异常）
      */
     void updateStatus(String deviceId, int status);
+
+    /**
+     * 根据设备业务标识获取设备实体（内部调用，不抛异常）
+     *
+     * @param deviceId 设备唯一标识
+     * @return 设备实体，不存在时返回 null
+     */
+    Device getDeviceByDeviceIdRaw(String deviceId);
 }

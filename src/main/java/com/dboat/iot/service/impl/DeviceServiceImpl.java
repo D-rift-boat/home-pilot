@@ -172,6 +172,13 @@ public class DeviceServiceImpl extends ServiceImpl<DeviceMapper, Device> impleme
         }
     }
 
+    @Override
+    public Device getDeviceByDeviceIdRaw(String deviceId) {
+        LambdaQueryWrapper<Device> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(Device::getDeviceId, deviceId);
+        return this.getOne(wrapper);
+    }
+
     /**
      * 实体转响应 DTO（内部方法）
      * <p>从 Redis 获取实时在线状态填充到响应中</p>

@@ -33,16 +33,21 @@ CREATE TABLE `device_info` (
 
 -- ----------------------------
 -- 设备指令表 / Device command table
+-- 存储标准 DOWN_CMD 格式指令记录，支持 requestId 异步应答匹配
 -- ----------------------------
 CREATE TABLE IF NOT EXISTS `device_command` (
     `id`          VARCHAR(64)   NOT NULL COMMENT '主键ID / Primary key (UUID)',
     `device_id`   VARCHAR(64)   NOT NULL COMMENT '关联设备标识 / Associated device_id',
-    `command`     VARCHAR(255)  NOT NULL COMMENT '指令内容 / Command content (e.g. set_temp:25, restart)',
+    `request_id`  VARCHAR(64)   DEFAULT NULL COMMENT '指令唯一ID(UUID) / DOWN_CMD header.requestId',
+    `cmd_code`    VARCHAR(64)   NOT NULL COMMENT '指令编码 / Command code (e.g. device_restart, sensor_calibrate, light_switch)',
+    `params`      TEXT          DEFAULT NULL COMMENT '指令参数JSON / Command params (DOWN_CMD payload.params)',
+    `timeout`     BIGINT        DEFAULT 5000 COMMENT '指令超时时间(ms) / Command timeout in milliseconds',
     `status`      TINYINT       NOT NULL DEFAULT 0 COMMENT '指令状态: 0=待下发, 1=已下发, 2=执行成功, 3=执行失败 / Status: 0=pending, 1=sent, 2=success, 3=failed',
     `create_time` DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间 / Created time',
     `update_time` DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间 / Updated time',
     PRIMARY KEY (`id`),
-    KEY `idx_device_id` (`device_id`)
+    KEY `idx_device_id` (`device_id`),
+    KEY `idx_request_id` (`request_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='设备指令表 / Device command table';
 
 -- ----------------------------

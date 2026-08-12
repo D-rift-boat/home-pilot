@@ -23,9 +23,21 @@ public class CommandRespDTO {
     @Schema(description = "目标设备标识")
     private String deviceId;
 
-    /** 指令内容 */
-    @Schema(description = "指令内容")
-    private String command;
+    /** 指令唯一ID（UUID），对应 DOWN_CMD header.requestId */
+    @Schema(description = "指令唯一ID")
+    private String requestId;
+
+    /** 指令编码，如 device_restart、sensor_calibrate、light_switch */
+    @Schema(description = "指令编码")
+    private String cmdCode;
+
+    /** 指令参数（JSON 字符串） */
+    @Schema(description = "指令参数")
+    private String params;
+
+    /** 指令超时时间（毫秒） */
+    @Schema(description = "超时时间(ms)")
+    private Long timeout;
 
     /**
      * 指令执行状态

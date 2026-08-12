@@ -13,7 +13,7 @@ import java.util.List;
  * 设备指令业务服务接口
  * <p>
  * 定义指令下发、查询、状态更新等操作。
- * 指令通过 MQTT 主题 device/command/{device_id} 发送到设备端。
+ * 指令通过 MQTT 主题 iot/cmd/{deviceId} 以标准 DOWN_CMD 格式发送到设备端。
  * </p>
  *
  * @author dboat

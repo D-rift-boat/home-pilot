@@ -7,13 +7,14 @@ import lombok.Getter;
  * 传感器连接状态枚举
  * <p>
  * 用于描述设备上报数据中各传感器模块的连接/工作状态。
- * 对应 ESP32 上报 JSON 中 sensor_detail 对象内的状态码字段：
+ * 对应 ESP32 上报 UP_DATA 消息中 payload.sensorStatus 对象内的状态码字段：
  * <pre>
  * {
- *   "sensor_detail": {
- *     "sensor_status": 1,   // 整体传感器状态
- *     "aht20_status": 1,    // AHT20 温湿度传感器状态
- *     "bmp280_status": 1    // BMP280 气压传感器状态
+ *   "payload": {
+ *     "sensorStatus": {
+ *       "aht20": 1,
+ *       "bmp280": 1
+ *     }
  *   }
  * }
  * </pre>

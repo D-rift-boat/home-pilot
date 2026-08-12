@@ -7,8 +7,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -114,5 +113,40 @@ public class DeviceStateStore {
     public void removeDeviceState(String deviceId) {
         redisTemplate.delete(buildKey(deviceId));
         log.info("Removed device state from Redis: {}", deviceId);
+    }
+
+    /**
+     * 获取所有在线设备ID列表
+     * <p>
+     * 通过 Redis KEYS 命令扫描 iot:device:state:* 前缀的键，
+     * 过滤出 online_status=1 的设备ID。
+     * </p>
+     *
+     * @return 在线设备ID集合
+     */
+    public Set<String> getOnlineDeviceIds() {
+        Set<String> onlineIds = new HashSet<>();
+        Set<String> keys = redisTemplate.keys(KEY_PREFIX + "*");
+        if (keys == null || keys.isEmpty()) {
+            return onlineIds;
+        }
+        for (String key : keys) {
+            String status = (String) redisTemplate.opsForHash().get(key, FIELD_ONLINE_STATUS);
+            if (status != null && Integer.parseInt(status) == DeviceOnlineStatusEnum.ONLINE.getCode()) {
+                // 从 key 中提取 deviceId（去掉前缀）
+                String deviceId = key.substring(KEY_PREFIX.length());
+                onlineIds.add(deviceId);
+            }
+        }
+        return onlineIds;
+    }
+
+    /**
+     * 获取在线设备数量
+     *
+     * @return 在线设备数
+     */
+    public int getOnlineCount() {
+        return getOnlineDeviceIds().size();
     }
 }
