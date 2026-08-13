@@ -163,13 +163,11 @@ public class DeviceServiceImpl extends ServiceImpl<DeviceMapper, Device> impleme
 
     @Override
     public void updateStatus(String deviceId, int status) {
-        // 设备在线状态统一由 Redis 管理，此方法保留用于兼容
-        // 如需更新，直接操作 Redis
+        // 设备在线状态统一由 Redis 管理
         if (status == DeviceOnlineStatusEnum.OFFLINE.getCode()) {
             deviceStateStore.setDeviceOffline(deviceId);
-        } else {
-            deviceStateStore.refreshDeviceState(deviceId, 1, 1, 1);
         }
+        // 在线状态由 MQTT 上报时 MqttMessageHandler 自动写入 Redis，此处无需额外处理
     }
 
     @Override
@@ -194,9 +192,13 @@ public class DeviceServiceImpl extends ServiceImpl<DeviceMapper, Device> impleme
         response.setCreateTime(device.getCreateTime());
         response.setUpdateTime(device.getUpdateTime());
 
-        // 从 Redis 读取实时在线状态
-        DeviceOnlineStatusEnum onlineStatus = deviceStateStore.getOnlineStatus(device.getDeviceId());
-        response.setStatus(onlineStatus.getCode());
+        // 从 Redis 判断设备是否在线（有 latest key 即为在线）
+        String latestData = deviceStateStore.getDeviceLatestData(device.getDeviceId());
+        if (latestData != null) {
+            response.setStatus(DeviceOnlineStatusEnum.ONLINE.getCode());
+        } else {
+            response.setStatus(DeviceOnlineStatusEnum.OFFLINE.getCode());
+        }
         return response;
     }
 }

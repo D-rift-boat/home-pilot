@@ -4,6 +4,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
  * home-pilot 物联网设备管理系统 —— 应用启动入口
@@ -16,6 +17,7 @@ import org.springframework.context.ConfigurableApplicationContext;
  */
 @Slf4j
 @SpringBootApplication
+@EnableScheduling
 public class HomePilotApplication {
 
     /**

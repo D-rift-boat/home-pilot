@@ -1,8 +1,8 @@
 package com.dboat.iot.mqtt;
 
 import com.alibaba.fastjson2.JSONObject;
-import com.dboat.iot.dto.mqtt.MqttDownCmdMessage;
-import com.dboat.iot.dto.mqtt.MqttUpDataMessage;
+import com.dboat.iot.common.constants.MqttConstants;
+import com.dboat.iot.dto.mqtt.*;
 import com.dboat.iot.entity.SensorData;
 import com.dboat.iot.enums.SensorStatusEnum;
 import com.dboat.iot.service.DeviceLogService;
@@ -10,12 +10,15 @@ import com.dboat.iot.service.DeviceService;
 import com.dboat.iot.service.SensorDataService;
 import com.dboat.iot.utils.DeviceStateStore;
 import com.dboat.iot.utils.JsonUtils;
+import com.dboat.iot.ws.DeviceWebSocketHandler;
+import org.apache.commons.lang3.ObjectUtils;
 import org.eclipse.paho.client.mqttv3.MqttMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
@@ -74,6 +77,8 @@ public class MqttMessageHandler {
     private final DeviceLogService deviceLogService;
     /** Redis 设备状态存储工具，用于刷新设备实时状态 */
     private final DeviceStateStore deviceStateStore;
+    /** WebSocket 处理器，用于向前端广播实时数据 */
+    private final DeviceWebSocketHandler webSocketHandler;
 
     /**
      * 构造方法注入依赖（使用 @Lazy 解决与 MqttClientManager 的循环依赖）
@@ -83,17 +88,20 @@ public class MqttMessageHandler {
      * @param sensorDataService    传感器数据服务
      * @param deviceLogService     设备日志服务
      * @param deviceStateStore     Redis 状态存储工具
+     * @param webSocketHandler     WebSocket 处理器（实时数据广播）
      */
     public MqttMessageHandler(@Lazy MqttClientManager mqttClientManager,
                                DeviceService deviceService,
                                SensorDataService sensorDataService,
                                DeviceLogService deviceLogService,
-                               DeviceStateStore deviceStateStore) {
+                               DeviceStateStore deviceStateStore,
+                               DeviceWebSocketHandler webSocketHandler) {
         this.mqttClientManager = mqttClientManager;
         this.deviceService = deviceService;
         this.sensorDataService = sensorDataService;
         this.deviceLogService = deviceLogService;
         this.deviceStateStore = deviceStateStore;
+        this.webSocketHandler = webSocketHandler;
     }
 
     /**
@@ -110,16 +118,23 @@ public class MqttMessageHandler {
      * @param message MQTT 消息体
      */
     public void handleMessage(String topic, MqttMessage message) {
-        String payload = new String(message.getPayload());
+        String payload = new String(message.getPayload(), StandardCharsets.UTF_8);
         log.info("Received MQTT message on topic [{}]: {}", topic, payload);
+
+        //解析上报数据 （按统一格式解析）
+        MqttUpDataMessage upDataMessage = JSONObject.parseObject(payload, MqttUpDataMessage.class);
+        MqttMessageHeader header = upDataMessage.getHeader();
 
         try {
             if (topic.startsWith(TOPIC_SENSOR_UPLOAD_PREFIX)) {
-                handleSensorUpload(topic, payload);
-            } else if (topic.matches("\\$SYS/brokers/[^/]+/clients/[^/]+/disconnected")) {
-                handleDeviceDisconnected(topic, payload);
+                handleSensorUpload(topic, upDataMessage);
             } else if (topic.startsWith(TOPIC_CLIENT_STAUTS_PREFIX)) {
-                log.info("device online: {}", topic);
+                if (header.getMsgType().equals(MqttConstants.ONLINE)){
+                    log.info("device online: {}", topic);
+                } else if (header.getMsgType().equals(MqttConstants.OFFLINE)) {
+                    handleDeviceDisconnected(topic, upDataMessage);
+                    log.info("device offline: {}", topic);
+                }
             } else {
                 log.warn("Unhandled MQTT topic: {}", topic);
             }
@@ -131,22 +146,23 @@ public class MqttMessageHandler {
     /**
      * 处理传感器数据上报（UP_DATA 标准格式）
      * <p>
-     * 解析 header + payload 结构：
-     * header 中提取 deviceId、traceId、timestamp 等元数据；
-     * payload 中提取 deviceStatus、sensorStatus、envData 等业务数据。
+     * 完整处理流程：
+     * <ol>
+     *   <li>解析 header + payload 结构</li>
+     *   <li>自动注册设备（首次上报）</li>
+     *   <li>时序入库 InfluxDB</li>
+     *   <li>刷新 Redis 设备快照（{userId}:{deviceId}:latest，TTL 24h）+ 维护在线数</li>
+     *   <li>组装 WebSocket 推送报文，广播给所有前端会话</li>
+     * </ol>
      * </p>
-     * 流程: 解析JSON → 内存告警计算 → 刷新Redis → 异步写入InfluxDB
      */
-    private void handleSensorUpload(String topic, String payload) {
-        // 使用 Fastjson2 解析为 UP_DATA DTO
-        MqttUpDataMessage msg = JsonUtils.parseObject(payload, MqttUpDataMessage.class);
-        if (msg == null || msg.getHeader() == null || msg.getPayload() == null) {
+    private void handleSensorUpload(String topic, MqttUpDataMessage message) {
+        MqttMessageHeader header = message.getHeader();
+        MqttMessagePayload payload = message.getPayload();
+        if (ObjectUtils.anyNull(header, payload)) {
             log.error("Invalid UP_DATA payload: {}", payload);
             return;
         }
-
-        MqttUpDataMessage.Header header = msg.getHeader();
-        MqttUpDataMessage.Payload body = msg.getPayload();
 
         // 校验消息类型
         if (!"UP_DATA".equals(header.getMsgType())) {
@@ -166,23 +182,34 @@ public class MqttMessageHandler {
         deviceService.autoRegister(deviceId);
 
         // 解析传感器状态（从 payload.sensorStatus 中获取各传感器独立状态）
-        int sensorStatus = body.getDeviceStatus() != null ? body.getDeviceStatus() : 1;
+        int deviceStatus = payload.getDeviceStatus() != null ? payload.getDeviceStatus() : 1;
         int aht20Status = 1;
         int bmp280Status = 1;
-        if (body.getSensorStatus() != null) {
-            aht20Status = body.getSensorStatus().getAht20() != null ? body.getSensorStatus().getAht20() : 1;
-            bmp280Status = body.getSensorStatus().getBmp280() != null ? body.getSensorStatus().getBmp280() : 1;
+        if (payload.getSensorStatus() != null) {
+            aht20Status = payload.getSensorStatus().getAht20() != null ? payload.getSensorStatus().getAht20() : 1;
+            bmp280Status = payload.getSensorStatus().getBmp280() != null ? payload  .getSensorStatus().getBmp280() : 1;
         }
 
-        // ========== 流式告警计算（In-Flight Alerting，数据入库前执行） ==========
-        //checkAndTriggerSensorAlarm(deviceId, sensorStatus, aht20Status, bmp280Status, payload);
-
-        // ========== 刷新 Redis 设备实时状态 ==========
-        deviceStateStore.refreshDeviceState(deviceId, sensorStatus, aht20Status, bmp280Status);
-
         // ========== 异步写入 InfluxDB ==========
-        SensorData sensorData = buildSensorData(deviceId, body, sensorStatus, aht20Status, bmp280Status);
+        SensorData sensorData = buildSensorData(deviceId, payload, deviceStatus, aht20Status, bmp280Status);
         sensorDataService.saveSensorData(sensorData);
+
+        // ========== 刷新 Redis 设备快照 + 维护在线数 ==========
+        // 构建完整设备数据 JSON（存入 {userId}:{deviceId}:latest，TTL 24h）
+        String deviceJson = buildDeviceLatestJson(deviceId, deviceStatus, aht20Status, bmp280Status, payload, header.getTimestamp());
+        boolean isNewDevice = deviceStateStore.updateDeviceLatestData(deviceId, deviceJson);
+        if (isNewDevice) {
+            log.info("Device first report / re-online, online count incremented: {}", deviceId);
+        }
+
+        // ========== WebSocket 实时推送 ==========
+        try {
+            String wsMessage = buildWebSocketPushMessage(deviceId, deviceStatus, aht20Status, bmp280Status, payload, header.getTimestamp());
+            webSocketHandler.broadcastToAll(wsMessage);
+        } catch (Exception e) {
+            log.warn("Failed to broadcast WS message for device [{}]: {}", deviceId, e.getMessage());
+        }
+
         log.info("Processed UP_DATA from device: {}", deviceId);
     }
 
@@ -226,18 +253,20 @@ public class MqttMessageHandler {
     /**
      * 处理 EMQX 设备断连事件
      * 主题格式: $SYS/brokers/{node}/clients/{client_id}/disconnected
+     * <p>
+     * 设备离线时：删除 Redis 最新数据 Key + DECR 在线数 + 记录离线日志
+     * </p>
      */
-    private void handleDeviceDisconnected(String topic, String payload) {
+    private void handleDeviceDisconnected(String topic, MqttUpDataMessage message) {
         // 从主题中提取 clientId（即 device_id）
-        String[] parts = topic.split("/");
-        if (parts.length < 5) {
+        if (ObjectUtils.isEmpty(message.getHeader())) {
             log.warn("Invalid disconnected topic format: {}", topic);
             return;
         }
-        String deviceId = parts[4]; // $SYS/brokers/{node}/clients/{device_id}/disconnected
+        String deviceId = message.getHeader().getDeviceId();
         log.warn("Device disconnected event received for device: {}", deviceId);
 
-        // 1. 更新 Redis 在线状态为 OFFLINE
+        // 1. 删除 Redis 最新数据 Key + DECR 在线数
         deviceStateStore.setDeviceOffline(deviceId);
 
         // 2. 从 InfluxDB 查询离线前最后一条传感器数据作为离线上下文
@@ -287,13 +316,13 @@ public class MqttMessageHandler {
      * @param bmp280Status  BMP280 气压传感器状态码
      * @return 填充完毕的 SensorData 实体
      */
-    private SensorData buildSensorData(String deviceId, MqttUpDataMessage.Payload payload,
+    private SensorData buildSensorData(String deviceId, MqttMessagePayload payload,
                                         int sensorStatus, int aht20Status, int bmp280Status) {
         SensorData sensorData = new SensorData();
         sensorData.setDeviceId(deviceId);
 
         // 从 envData 中提取环境监测数据（驼峰字段，零映射成本）
-        MqttUpDataMessage.EnvData env = payload.getEnvData();
+        MqttUpEnvData env = payload.getEnvData();
         if (env != null) {
             sensorData.setTemperatureAht(env.getTempAht());
             sensorData.setTemperatureBmp(env.getTempBmp());
@@ -307,6 +336,92 @@ public class MqttMessageHandler {
         sensorData.setBmp280Status(bmp280Status);
         sensorData.setReportTime(Instant.now());
         return sensorData;
+    }
+
+    /**
+     * 构建设备最新数据 JSON（存入 Redis {userId}:{deviceId}:latest）
+     * <p>
+     * 格式：
+     * <pre>
+     * {
+     *   "deviceId": "esp32-S3-001",
+     *   "deviceStatus": 1,
+     *   "tempAht": 27.11, "tempBmp": 28.25,
+     *   "humidity": 62.10, "pressureHpa": 990.20, "altitude": -27.34,
+     *   "aht20Status": 1, "bmp280Status": 1,
+     *   "timestamp": 1755623345216
+     * }
+     * </pre>
+     * </p>
+     */
+    private String buildDeviceLatestJson(String deviceId, int deviceStatus,
+                                          int aht20Status, int bmp280Status,
+                                         MqttMessagePayload body, Long deviceTimestamp) {
+        JSONObject json = new JSONObject();
+        json.put("deviceId", deviceId);
+        json.put("deviceStatus", deviceStatus);
+        json.put("aht20Status", aht20Status);
+        json.put("bmp280Status", bmp280Status);
+        json.put("timestamp", deviceTimestamp != null ? deviceTimestamp : System.currentTimeMillis());
+
+        // 填充 envData 字段
+        MqttUpEnvData env = body.getEnvData(); // Changed from body.getEnvData() to payload.getEnvData()
+        if (env != null) {
+            json.put("tempAht", env.getTempAht());
+            json.put("tempBmp", env.getTempBmp());
+            json.put("humidity", env.getHumidity());
+            json.put("pressureHpa", env.getPressureHpa());
+            json.put("altitude", env.getAltitude());
+        }
+        return json.toJSONString();
+    }
+
+    /**
+     * 构建 WebSocket 实时推送报文（REAL_TIME_DATA 格式）
+     * <p>
+     * 格式：
+     * <pre>
+     * {
+     *   "type": "REAL_TIME_DATA",
+     *   "data": { "tempAht": ..., "humidity": ..., "pressureHpa": ..., "altitude": ..., "onlineCount": N },
+     *   "device": { "deviceId": ..., "deviceStatus": ..., "aht20Status": ..., "bmp280Status": ..., "tempBmp": ... },
+     *   "timestamp": ...
+     * }
+     * </pre>
+     * </p>
+     */
+    private String buildWebSocketPushMessage(String deviceId, int deviceStatus,
+                                              int aht20Status, int bmp280Status,
+                                              MqttMessagePayload body, Long deviceTimestamp) {
+        JSONObject message = new JSONObject();
+        message.put("type", "REAL_TIME_DATA");
+        message.put("timestamp", deviceTimestamp != null ? deviceTimestamp : System.currentTimeMillis());
+
+        // data 部分：跨页面共享的实时汇总数据
+        JSONObject data = new JSONObject();
+        long onlineCount = deviceStateStore.getOnlineCount();
+        MqttUpEnvData env = body.getEnvData();
+        if (env != null) {
+            data.put("tempAht", env.getTempAht());
+            data.put("humidity", env.getHumidity());
+            data.put("pressureHpa", env.getPressureHpa());
+            data.put("altitude", env.getAltitude());
+        }
+        data.put("onlineCount", onlineCount);
+        message.put("data", data);
+
+        // device 部分：设备级详细信息
+        JSONObject device = new JSONObject();
+        device.put("deviceId", deviceId);
+        device.put("deviceStatus", deviceStatus);
+        device.put("aht20Status", aht20Status);
+        device.put("bmp280Status", bmp280Status);
+        if (env != null) {
+            device.put("tempBmp", env.getTempBmp());
+        }
+        message.put("device", device);
+
+        return message.toJSONString();
     }
 
     /**
