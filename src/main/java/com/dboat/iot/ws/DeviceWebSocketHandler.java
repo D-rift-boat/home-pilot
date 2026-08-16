@@ -1,5 +1,9 @@
 package com.dboat.iot.ws;
 
+import com.alibaba.fastjson2.JSONObject;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.annotation.Resource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -65,6 +69,9 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
         this.redisTemplate = redisTemplate;
     }
 
+    @Resource
+    private ObjectMapper objectMapper;
+
     // ==================== 连接生命周期 ====================
 
     /**
@@ -102,12 +109,22 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
      */
     @Override
     protected void handleTextMessage(WebSocketSession session, TextMessage message) throws Exception {
+        String payload = message.getPayload();
+        JsonNode json = objectMapper.readTree(payload);
+        String type = json.get("type").asText();
         String redisKey = sessionKeyMap.get(session.getId());
         if (redisKey != null) {
             // 刷新 Redis TTL
             redisTemplate.expire(redisKey, WS_ROUTER_TTL_SECONDS, TimeUnit.SECONDS);
             log.debug("WS heartbeat refreshed: sessionId={}, key={}", session.getId(), redisKey);
         }
+        if("ping".equals(type)){
+            // 收到ping，立刻回复pong
+            String pong = "{\"type\":\"pong\"}";
+            session.sendMessage(new TextMessage(pong));
+            return;
+        }
+
     }
 
     /**
@@ -165,6 +182,42 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
                 }
             }
         });
+    }
+
+    /**
+     * 按 Key 前缀批量推送消息
+     * <p>
+     * 遍历 sessionMap，筛选出 mapKey 以指定前缀开头的会话，批量发送消息。
+     * 支持按不同粒度匹配：
+     * <ul>
+     *   <li>按 userId 匹配：前缀 "admin:" → 推送给 admin 下所有设备/节点</li>
+     *   <li>按 userId + userDeviceId 匹配：前缀 "admin:phone-001:" → 推送给该设备的所有节点</li>
+     *   <li>精确匹配：前缀 "admin:phone-001:pilot-app" → 仅推送给该节点</li>
+     * </ul>
+     * </p>
+     *
+     * @param keyPrefix Key 前缀，如 "admin:" 或 "admin:phone-001:"
+     * @param message   JSON 格式的消息字符串
+     * @return 实际成功推送的会话数
+     */
+    public int broadcastByKeyPrefix(String keyPrefix, String message) {
+        if (sessionMap.isEmpty()) {
+            return 0;
+        }
+        TextMessage textMessage = new TextMessage(message);
+        int[] successCount = {0};
+        sessionMap.forEach((key, session) -> {
+            if (key.startsWith(keyPrefix) && session.isOpen()) {
+                try {
+                    session.sendMessage(textMessage);
+                    successCount[0]++;
+                } catch (IOException e) {
+                    log.warn("Failed to send WS message to session [{}]: {}", key, e.getMessage());
+                }
+            }
+        });
+        log.debug("Batch send by prefix [{}]: success={}/total={}", keyPrefix, successCount[0], sessionMap.size());
+        return successCount[0];
     }
 
     // ==================== 定时清理 ====================

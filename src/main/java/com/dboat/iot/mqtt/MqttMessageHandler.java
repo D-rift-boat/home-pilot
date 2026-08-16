@@ -182,7 +182,7 @@ public class MqttMessageHandler {
         deviceService.autoRegister(deviceId);
 
         // 解析传感器状态（从 payload.sensorStatus 中获取各传感器独立状态）
-        int deviceStatus = payload.getDeviceStatus() != null ? payload.getDeviceStatus() : 1;
+        int deviceStatus = payload.getDeviceStatus() != null ? payload.getDeviceStatus() : SensorStatusEnum.NORMAL.getCode();
         int aht20Status = 1;
         int bmp280Status = 1;
         if (payload.getSensorStatus() != null) {
@@ -204,7 +204,7 @@ public class MqttMessageHandler {
 
         // ========== WebSocket 实时推送 ==========
         try {
-            String wsMessage = buildWebSocketPushMessage(deviceId, deviceStatus, aht20Status, bmp280Status, payload, header.getTimestamp());
+            String wsMessage = buildWebSocketPushMessage(message);
             webSocketHandler.broadcastToAll(wsMessage);
         } catch (Exception e) {
             log.warn("Failed to broadcast WS message for device [{}]: {}", deviceId, e.getMessage());
@@ -274,6 +274,14 @@ public class MqttMessageHandler {
 
         // 3. 记录设备离线日志
         deviceLogService.logDeviceOffline(deviceId, offlineContext);
+
+        // ========== WebSocket 实时推送（设备离线通知） ==========
+        try {
+            String wsMessage = buildDeviceOfflineMessage(deviceId);
+            webSocketHandler.broadcastToAll(wsMessage);
+        } catch (Exception e) {
+            log.warn("Failed to broadcast WS offline message for device [{}]: {}", deviceId, e.getMessage());
+        }
     }
 
     /**
@@ -379,6 +387,7 @@ public class MqttMessageHandler {
     /**
      * 构建 WebSocket 实时推送报文（REAL_TIME_DATA 格式）
      * <p>
+     * 入参为完整的 MqttUpDataMessage，内部提取 header/payload 中的所需字段。
      * 格式：
      * <pre>
      * {
@@ -389,10 +398,25 @@ public class MqttMessageHandler {
      * }
      * </pre>
      * </p>
+     *
+     * @param upDataMessage MQTT 上行消息（header + payload）
+     * @return JSON 格式的 WebSocket 推送报文
      */
-    private String buildWebSocketPushMessage(String deviceId, int deviceStatus,
-                                              int aht20Status, int bmp280Status,
-                                              MqttMessagePayload body, Long deviceTimestamp) {
+    private String buildWebSocketPushMessage(MqttUpDataMessage upDataMessage) {
+        MqttMessageHeader header = upDataMessage.getHeader();
+        MqttMessagePayload payload = upDataMessage.getPayload();
+        String deviceId = header.getDeviceId();
+        Long deviceTimestamp = header.getTimestamp();
+
+        // 从 payload 中提取传感器状态（带默认值）
+        int deviceStatus = payload.getDeviceStatus() != null ? payload.getDeviceStatus() : 1;
+        int aht20Status = SensorStatusEnum.NORMAL.getCode();
+        int bmp280Status = SensorStatusEnum.NORMAL.getCode();
+        if (payload.getSensorStatus() != null) {
+            aht20Status = payload.getSensorStatus().getAht20() != null ? payload.getSensorStatus().getAht20() : SensorStatusEnum.NORMAL.getCode();
+            bmp280Status = payload.getSensorStatus().getBmp280() != null ? payload.getSensorStatus().getBmp280() : SensorStatusEnum.NORMAL.getCode();
+        }
+
         JSONObject message = new JSONObject();
         message.put("type", "REAL_TIME_DATA");
         message.put("timestamp", deviceTimestamp != null ? deviceTimestamp : System.currentTimeMillis());
@@ -400,7 +424,7 @@ public class MqttMessageHandler {
         // data 部分：跨页面共享的实时汇总数据
         JSONObject data = new JSONObject();
         long onlineCount = deviceStateStore.getOnlineCount();
-        MqttUpEnvData env = body.getEnvData();
+        MqttUpEnvData env = payload.getEnvData();
         if (env != null) {
             data.put("tempAht", env.getTempAht());
             data.put("humidity", env.getHumidity());
@@ -421,6 +445,31 @@ public class MqttMessageHandler {
         }
         message.put("device", device);
 
+        return message.toJSONString();
+    }
+
+    /**
+     * 构建设备离线 WebSocket 推送报文（DEVICE_OFFLINE 格式）
+     * <p>
+     * 设备断连时推送给前端，通知前端更新设备离线状态。
+     * 格式：
+     * <pre>
+     * {
+     *   "type": "DEVICE_OFFLINE",
+     *   "deviceId": "esp32-S3-001",
+     *   "timestamp": ...
+     * }
+     * </pre>
+     * </p>
+     *
+     * @param deviceId 离线设备ID
+     * @return JSON 格式的离线通知报文
+     */
+    private String buildDeviceOfflineMessage(String deviceId) {
+        JSONObject message = new JSONObject();
+        message.put("type", "DEVICE_OFFLINE");
+        message.put("deviceId", deviceId);
+        message.put("timestamp", System.currentTimeMillis());
         return message.toJSONString();
     }
 
