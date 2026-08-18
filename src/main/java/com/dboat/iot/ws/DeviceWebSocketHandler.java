@@ -111,7 +111,8 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
         redisTemplate.expire(redisKey, WS_ROUTER_TTL_SECONDS, TimeUnit.SECONDS);
 
         // 用户上线 ws通知用户在线设备数量
-        Long userDeviceOnlineCount = deviceStateStore.incrementOnlineUserDevCount(userId);
+        Long userDeviceOnlineCount = redisTemplate.opsForHash().size(redisKey);
+        //Long userDeviceOnlineCount = deviceStateStore.incrementOnlineUserDevCount(userId);
         WsUploadDataDTO wsUploadDataDTO = new WsUploadDataDTO();
         wsUploadDataDTO.setType("USER_DEVICE_ONLINE_COUNT");
         WsUploadDataDTO.DataDTO dataDTO = new WsUploadDataDTO.DataDTO();
@@ -183,19 +184,20 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
         WsSession wsSession = sessionMap.get(session.getId());
         if (redisSessionKey != null) {
             // 从 Redis 删除路由 sessionKey
-            redisTemplate.delete(redisSessionKey);
+            redisTemplate.opsForHash().delete(redisSessionKey, session.getId());
             // 从内存 Map 中移除（反查 mapKey）
             sessionMap.entrySet().removeIf(entry -> entry.getKey().equals(session.getId()));
 
             // 用户下线  提取userId  更新用户在线设备数
             String userId = redisSessionKey.substring(WS_ROUTER_PREFIX.length());
-            Long onlineUserDevCount = deviceStateStore.decrementOnlineUserDevCount(userId);
+            Long userDeviceOnlineCount = redisTemplate.opsForHash().size(redisSessionKey);
+            //Long onlineUserDevCount = deviceStateStore.decrementOnlineUserDevCount(userId);
             WsUploadDataDTO wsUploadDataDTO = new WsUploadDataDTO();
             wsUploadDataDTO.setType(WsTypeEnum.USER_DEVICE_ONLINE_COUNT.getCode());
             WsUploadDataDTO.DataDTO dataDTO = new WsUploadDataDTO.DataDTO();
             WsUploadDataDTO.DeviceDTO deviceDTO = new WsUploadDataDTO.DeviceDTO();
             deviceDTO.setDeviceId("web-001");
-            dataDTO.setUserDeviceOnlineCount(onlineUserDevCount);
+            dataDTO.setUserDeviceOnlineCount(userDeviceOnlineCount);
             wsUploadDataDTO.setData((dataDTO));
             wsUploadDataDTO.setDevice(deviceDTO);
             broadcastToAll(JSONObject.toJSONString(wsUploadDataDTO));
