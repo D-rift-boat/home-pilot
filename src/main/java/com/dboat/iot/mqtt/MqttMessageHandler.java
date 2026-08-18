@@ -18,6 +18,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.HashMap;
@@ -182,9 +184,9 @@ public class MqttMessageHandler {
         deviceService.autoRegister(deviceId);
 
         // 解析传感器状态（从 payload.sensorStatus 中获取各传感器独立状态）
-        int deviceStatus = payload.getDeviceStatus() != null ? payload.getDeviceStatus() : SensorStatusEnum.NORMAL.getCode();
-        int aht20Status = 1;
-        int bmp280Status = 1;
+        Integer deviceStatus = payload.getDeviceStatus() != null ? payload.getDeviceStatus() : SensorStatusEnum.NORMAL.getCode();
+        Integer aht20Status = 1;
+        Integer bmp280Status = 1;
         if (payload.getSensorStatus() != null) {
             aht20Status = payload.getSensorStatus().getAht20() != null ? payload.getSensorStatus().getAht20() : 1;
             bmp280Status = payload.getSensorStatus().getBmp280() != null ? payload  .getSensorStatus().getBmp280() : 1;
@@ -196,8 +198,8 @@ public class MqttMessageHandler {
 
         // ========== 刷新 Redis 设备快照 + 维护在线数 ==========
         // 构建完整设备数据 JSON（存入 {userId}:{deviceId}:latest，TTL 24h）
-        String deviceJson = buildDeviceLatestJson(deviceId, deviceStatus, aht20Status, bmp280Status, payload, header.getTimestamp());
-        boolean isNewDevice = deviceStateStore.updateDeviceLatestData(deviceId, deviceJson);
+        Map deviceDataMap = buildDeviceLatestMap(deviceId, deviceStatus, aht20Status, bmp280Status, payload, header.getTimestamp());
+        boolean isNewDevice = deviceStateStore.updateDeviceLatestData(deviceId, deviceDataMap);
         if (isNewDevice) {
             log.info("Device first report / re-online, online count incremented: {}", deviceId);
         }
@@ -267,7 +269,7 @@ public class MqttMessageHandler {
         log.warn("Device disconnected event received for device: {}", deviceId);
 
         // 1. 删除 Redis 最新数据 Key + DECR 在线数
-        deviceStateStore.setDeviceOffline(deviceId);
+        deviceStateStore.userDeviceOffline(deviceId);
 
         // 2. 从 InfluxDB 查询离线前最后一条传感器数据作为离线上下文
         String offlineContext = buildOfflineContext(deviceId);
@@ -362,26 +364,34 @@ public class MqttMessageHandler {
      * </pre>
      * </p>
      */
-    private String buildDeviceLatestJson(String deviceId, int deviceStatus,
-                                          int aht20Status, int bmp280Status,
+    private HashMap<String, String> buildDeviceLatestMap(String deviceId, Integer deviceStatus,
+                                                         Integer aht20Status, Integer bmp280Status,
                                          MqttMessagePayload body, Long deviceTimestamp) {
-        JSONObject json = new JSONObject();
-        json.put("deviceId", deviceId);
-        json.put("deviceStatus", deviceStatus);
-        json.put("aht20Status", aht20Status);
-        json.put("bmp280Status", bmp280Status);
-        json.put("timestamp", deviceTimestamp != null ? deviceTimestamp : System.currentTimeMillis());
+        HashMap<String, String> map = new HashMap<>();
+        map.put("deviceId", deviceId);
+        map.put("deviceStatus", deviceStatus.toString());
+        map.put("aht20Status", aht20Status.toString());
+        map.put("bmp280Status", bmp280Status.toString());
+        map.put("timestamp", Long.valueOf(deviceTimestamp != null ? deviceTimestamp : System.currentTimeMillis()).toString());
 
         // 填充 envData 字段
         MqttUpEnvData env = body.getEnvData(); // Changed from body.getEnvData() to payload.getEnvData()
         if (env != null) {
-            json.put("tempAht", env.getTempAht());
-            json.put("tempBmp", env.getTempBmp());
-            json.put("humidity", env.getHumidity());
-            json.put("pressureHpa", env.getPressureHpa());
-            json.put("altitude", env.getAltitude());
+            map.put("tempAht", formatBigDecimal(env.getTempAht()));
+            map.put("tempBmp", formatBigDecimal(env.getTempBmp()));
+            map.put("humidity", formatBigDecimal(env.getHumidity()));
+            map.put("pressureHpa", formatBigDecimal(env.getPressureHpa()));
+            map.put("altitude", formatBigDecimal(env.getAltitude()))        ;
         }
-        return json.toJSONString();
+        return map;
+    }
+
+    /**
+     * 格式化BigDecimal字段
+     */
+    private String formatBigDecimal(BigDecimal value) {
+        if (value == null) return "0.00";
+        return value.setScale(2, RoundingMode.HALF_UP).toPlainString();
     }
 
     /**
@@ -423,7 +433,7 @@ public class MqttMessageHandler {
 
         // data 部分：跨页面共享的实时汇总数据
         JSONObject data = new JSONObject();
-        long onlineCount = deviceStateStore.getOnlineCount();
+        //long onlineCount = deviceStateStore.getUserDeviceOnlineCount();
         MqttUpEnvData env = payload.getEnvData();
         if (env != null) {
             data.put("tempAht", env.getTempAht());
@@ -431,7 +441,7 @@ public class MqttMessageHandler {
             data.put("pressureHpa", env.getPressureHpa());
             data.put("altitude", env.getAltitude());
         }
-        data.put("onlineCount", onlineCount);
+        //data.put("onlineCount", onlineCount);
         message.put("data", data);
 
         // device 部分：设备级详细信息

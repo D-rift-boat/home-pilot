@@ -1,11 +1,19 @@
 package com.dboat.iot.ws;
 
 import com.alibaba.fastjson2.JSONObject;
+import com.dboat.iot.dto.mqtt.MqttMessageHeader;
+import com.dboat.iot.dto.mqtt.MqttUpDataMessage;
+import com.dboat.iot.dto.ws.WsUploadDataDTO;
+import com.dboat.iot.enums.WsTypeEnum;
+import com.dboat.iot.utils.DeviceStateStore;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.Resource;
+import lombok.extern.slf4j.Slf4j;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.redis.core.Cursor;
+import org.springframework.data.redis.core.ScanOptions;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -18,9 +26,12 @@ import java.io.IOException;
 import java.net.URI;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+
+import static com.dboat.iot.common.constants.WebSocketConstants.*;
 
 /**
  * WebSocket 连接处理器
@@ -46,22 +57,14 @@ import java.util.concurrent.TimeUnit;
  *
  * @author dboat
  */
+@Slf4j
 @Component
 public class DeviceWebSocketHandler extends TextWebSocketHandler {
-
-    private static final Logger log = LoggerFactory.getLogger(DeviceWebSocketHandler.class);
-
-    /** Redis 路由 Key 前缀：ws:device:router:{userId}:{nodeId} */
-    private static final String WS_ROUTER_PREFIX = "ws:device:router:";
-
-    /** Redis 路由 Key TTL：60秒（前端30s心跳，留2倍余量） */
-    private static final long WS_ROUTER_TTL_SECONDS = 60;
-
-    /** 内存会话表：key = userId:userDeviceId:nodeId，value = WebSocketSession */
-    private final ConcurrentHashMap<String, WebSocketSession> sessionMap = new ConcurrentHashMap<>();
+    /** 内存会话表：key = userId，value = WebSocketSession */
+    private final ConcurrentHashMap<String, WsSession> sessionMap = new ConcurrentHashMap<>();
 
     /** Session 与路由 Key 的映射：sessionId → redisKey，用于关闭时清理 */
-    private final ConcurrentHashMap<String, String> sessionKeyMap = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, String> sessionRedisKeyMap = new ConcurrentHashMap<>();
 
     private final StringRedisTemplate redisTemplate;
 
@@ -71,6 +74,9 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
 
     @Resource
     private ObjectMapper objectMapper;
+
+    @Resource
+    private DeviceStateStore deviceStateStore;
 
     // ==================== 连接生命周期 ====================
 
@@ -87,15 +93,35 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
         String userId = "admin";
         String userDeviceId = "phone-001";
         String nodeId = "pilot-app";
-        String mapKey = userId + ":" +userDeviceId + ":" + nodeId;
-        String redisKey = WS_ROUTER_PREFIX + userId + ":" + nodeId;
+        String sessionKey = userId + ":" + userDeviceId;
+        String redisKey = WS_ROUTER_PREFIX + userId ;
 
         // 注册到内存 Map
-        sessionMap.put(mapKey, session);
-        sessionKeyMap.put(session.getId(), redisKey);
+        WsSession wsSession = WsSession.builder().webSocketSession(session).lastHeartbeatTime(System.currentTimeMillis()).build();
+        sessionMap.put(session.getId(), wsSession);
+        sessionRedisKeyMap.put(session.getId(), redisKey);
 
         // 写入 Redis 路由 Key（TTL 60s）
-        redisTemplate.opsForValue().set(redisKey, session.getId(), WS_ROUTER_TTL_SECONDS, TimeUnit.SECONDS);
+        HashMap<String, Object> hashMap = new HashMap<>();
+        hashMap.put("nodeId", nodeId);
+        hashMap.put("lastHeartbeatTs", String.valueOf(System.currentTimeMillis()));
+        HashMap<String, Object> map = new HashMap<>();
+        map.put(session.getId(), JSONObject.toJSONString(hashMap));
+        redisTemplate.opsForHash().putAll(redisKey, map);
+        redisTemplate.expire(redisKey, WS_ROUTER_TTL_SECONDS, TimeUnit.SECONDS);
+
+        // 用户上线 ws通知用户在线设备数量
+        Long userDeviceOnlineCount = deviceStateStore.incrementOnlineUserDevCount(userId);
+        WsUploadDataDTO wsUploadDataDTO = new WsUploadDataDTO();
+        wsUploadDataDTO.setType("USER_DEVICE_ONLINE_COUNT");
+        WsUploadDataDTO.DataDTO dataDTO = new WsUploadDataDTO.DataDTO();
+        WsUploadDataDTO.DeviceDTO deviceDTO = new WsUploadDataDTO.DeviceDTO();
+        deviceDTO.setDeviceId("web-001");
+        dataDTO.setUserDeviceOnlineCount(userDeviceOnlineCount);
+        wsUploadDataDTO.setData((dataDTO));
+        wsUploadDataDTO.setDevice(deviceDTO);
+        wsUploadDataDTO.setData((dataDTO));
+        broadcastToAll(JSONObject.toJSONString(wsUploadDataDTO));
 
         log.info("WS connected: userId={}, nodeId={}, sessionId={}, total={}", userId, nodeId, session.getId(), sessionMap.size());
     }
@@ -112,17 +138,32 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
         String payload = message.getPayload();
         JsonNode json = objectMapper.readTree(payload);
         String type = json.get("type").asText();
-        String redisKey = sessionKeyMap.get(session.getId());
+        String redisKey = sessionRedisKeyMap.get(session.getId());
+        // 更新内存 Map 中的最后心跳时间 心跳不必带锁
+        WsSession wsSession = sessionMap.get(session.getId());
+        if (wsSession != null) {
+            wsSession.setLastHeartbeatTime(System.currentTimeMillis());
+        }
+        // 更新内存 Map 中的最后心跳时间（使用 computeIfPresent key带锁  确保线程安全）
+        //sessionMap.computeIfPresent(session.getId(), (k, v) -> {
+        //    v.setLastHeartbeatTime(System.currentTimeMillis());
+        //    return v;
+        //});
         if (redisKey != null) {
             // 刷新 Redis TTL
             redisTemplate.expire(redisKey, WS_ROUTER_TTL_SECONDS, TimeUnit.SECONDS);
+            HashMap<String, Object> hashMap = new HashMap<>();
+            hashMap.put("nodeId", "pilot-app");
+            hashMap.put("lastHeartbeatTs", String.valueOf(System.currentTimeMillis()));
+            HashMap<String, Object> map = new HashMap<>();
+            map.put(session.getId(), JSONObject.toJSONString(hashMap));
+            redisTemplate.opsForHash().putAll(redisKey, map);
             log.debug("WS heartbeat refreshed: sessionId={}, key={}", session.getId(), redisKey);
         }
         if("ping".equals(type)){
             // 收到ping，立刻回复pong
             String pong = "{\"type\":\"pong\"}";
             session.sendMessage(new TextMessage(pong));
-            return;
         }
 
     }
@@ -131,16 +172,33 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
      * 连接关闭（正常关闭 / 异常断开）
      * <p>
      * 清理内存 Map 和 Redis 路由 Key。
+     * 用户在线设备数 -1
+     * 本地session、redis session 删除
+     * 用户会话key 删除
      * </p>
      */
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) throws Exception {
-        String redisKey = sessionKeyMap.remove(session.getId());
-        if (redisKey != null) {
-            // 从 Redis 删除路由 Key
-            redisTemplate.delete(redisKey);
+        String redisSessionKey = sessionRedisKeyMap.remove(session.getId());
+        WsSession wsSession = sessionMap.get(session.getId());
+        if (redisSessionKey != null) {
+            // 从 Redis 删除路由 sessionKey
+            redisTemplate.delete(redisSessionKey);
             // 从内存 Map 中移除（反查 mapKey）
-            sessionMap.entrySet().removeIf(entry -> entry.getValue().getId().equals(session.getId()));
+            sessionMap.entrySet().removeIf(entry -> entry.getKey().equals(session.getId()));
+
+            // 用户下线  提取userId  更新用户在线设备数
+            String userId = redisSessionKey.substring(WS_ROUTER_PREFIX.length());
+            Long onlineUserDevCount = deviceStateStore.decrementOnlineUserDevCount(userId);
+            WsUploadDataDTO wsUploadDataDTO = new WsUploadDataDTO();
+            wsUploadDataDTO.setType(WsTypeEnum.USER_DEVICE_ONLINE_COUNT.getCode());
+            WsUploadDataDTO.DataDTO dataDTO = new WsUploadDataDTO.DataDTO();
+            WsUploadDataDTO.DeviceDTO deviceDTO = new WsUploadDataDTO.DeviceDTO();
+            deviceDTO.setDeviceId("web-001");
+            dataDTO.setUserDeviceOnlineCount(onlineUserDevCount);
+            wsUploadDataDTO.setData((dataDTO));
+            wsUploadDataDTO.setDevice(deviceDTO);
+            broadcastToAll(JSONObject.toJSONString(wsUploadDataDTO));
             log.info("WS disconnected: sessionId={}, status={}, remaining={}", session.getId(), status, sessionMap.size());
         }
     }
@@ -173,9 +231,9 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
         }
         TextMessage textMessage = new TextMessage(message);
         sessionMap.forEach((key, session) -> {
-            if (session.isOpen()) {
+            if (session.getWebSocketSession().isOpen()) {
                 try {
-                    session.sendMessage(textMessage);
+                    session.getWebSocketSession().sendMessage(textMessage);
                 } catch (IOException e) {
                     log.warn("Failed to send WS message to session [{}]: {}", key, e.getMessage());
                     // 发送失败，标记清理（下次定时任务会处理）
@@ -207,9 +265,9 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
         TextMessage textMessage = new TextMessage(message);
         int[] successCount = {0};
         sessionMap.forEach((key, session) -> {
-            if (key.startsWith(keyPrefix) && session.isOpen()) {
+            if (key.startsWith(keyPrefix) && session.getWebSocketSession().isOpen()) {
                 try {
-                    session.sendMessage(textMessage);
+                    session.getWebSocketSession().sendMessage(textMessage);
                     successCount[0]++;
                 } catch (IOException e) {
                     log.warn("Failed to send WS message to session [{}]: {}", key, e.getMessage());
@@ -218,39 +276,6 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
         });
         log.debug("Batch send by prefix [{}]: success={}/total={}", keyPrefix, successCount[0], sessionMap.size());
         return successCount[0];
-    }
-
-    // ==================== 定时清理 ====================
-
-    /**
-     * 定时清理过期会话（每 30 秒执行一次）
-     * <p>
-     * 遍历内存 Map，检查对应 Redis 路由 Key 是否存活：
-     * - Key 不存在（已过期）→ 说明前端心跳中断，关闭 Session 并从 Map 移除
-     * - Key 存在 → 连接正常，跳过
-     * </p>
-     */
-    @Scheduled(fixedRate = 30_000, initialDelay = 30_000)
-    public void cleanExpiredSessions() {
-        if (sessionMap.isEmpty()) {
-            return;
-        }
-        sessionMap.forEach((key, session) -> {
-            String redisKey = sessionKeyMap.get(session.getId());
-            if (redisKey == null || Boolean.FALSE.equals(redisTemplate.hasKey(redisKey))) {
-                // Redis Key 已过期，关闭并移除 Session
-                log.info("Cleaning expired WS session: mapKey={}, sessionId={}", key, session.getId());
-                try {
-                    if (session.isOpen()) {
-                        session.close(CloseStatus.POLICY_VIOLATION);
-                    }
-                } catch (IOException e) {
-                    log.warn("Error closing expired WS session [{}]: {}", key, e.getMessage());
-                }
-                sessionMap.remove(key);
-                sessionKeyMap.remove(session.getId());
-            }
-        });
     }
 
     // ==================== 工具方法 ====================
@@ -288,5 +313,19 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
      */
     public int getOnlineSessionCount() {
         return sessionMap.size();
+    }
+
+    /**
+     * 获取当前会话 Map
+     */
+    public Map<String, WsSession> getWsSessionMap(){
+        return sessionMap;
+    }
+
+    /**
+     * 获取当前会话 Redis Key Map
+     */
+    public Map<String, String> getWsSessionRedisKeyMap(){
+        return sessionRedisKeyMap;
     }
 }

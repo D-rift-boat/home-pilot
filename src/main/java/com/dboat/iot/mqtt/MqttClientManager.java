@@ -1,12 +1,15 @@
 package com.dboat.iot.mqtt;
 
 import com.dboat.iot.config.MqttConfig;
+import com.dboat.iot.service.DeviceService;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
+import jakarta.annotation.Resource;
 import org.eclipse.paho.client.mqttv3.*;
 import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -28,6 +31,9 @@ public class MqttClientManager {
 
     private MqttClient mqttClient;
 
+    @Resource
+    private RedisTemplate<String, Object> redisTemplate;
+
     public MqttClientManager(MqttConfig mqttConfig,
                               MqttConnectOptions mqttConnectOptions,
                               MqttMessageHandler messageHandler) {
@@ -47,6 +53,8 @@ public class MqttClientManager {
                 public void connectComplete(boolean reconnect, String serverURI) {
                     log.info("MQTT connected to {} (reconnect={})", serverURI, reconnect);
                     subscribeTopics();
+                    //re
+                    redisTemplate.opsForValue().set("mqtt:connected", true);
                 }
 
                 @Override

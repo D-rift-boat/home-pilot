@@ -1,14 +1,18 @@
 package com.dboat.iot.utils;
 
 import com.alibaba.fastjson2.JSONObject;
+import org.apache.commons.lang3.ObjectUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.ScanOptions;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.Cursor;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Component;
 
+import java.util.Collections;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
@@ -36,17 +40,51 @@ public class DeviceStateStore {
 
     private static final Logger log = LoggerFactory.getLogger(DeviceStateStore.class);
 
-    /** 默认用户ID（前端写死 admin） */
+    /**
+     * 默认用户ID（前端写死 admin）
+     */
     private static final String DEFAULT_USER_ID = "admin";
 
-    /** 设备最新数据 Key 后缀 */
-    private static final String LATEST_SUFFIX = ":latest";
+    /**
+     * 设备最新数据 Key 前缀
+     */
+    private static final String LATEST_PREFIX = "ws:iot_device:latest:";
 
-    /** 在线设备总数 Key */
-    private static final String ONLINE_COUNT_SUFFIX = ":deviceOnlineCount";
+    /**
+     * 用户在线iot设备列表 前缀
+     */
+    private static final String ONLINE_IOT_DEVICE_LIST_PREFIX = "ws:iot_device:online_list:";
 
-    /** 设备最新数据 TTL：24小时（长时间无上报自动过期，判定设备离线） */
+    /**
+     * 用户在线设备总数 Key
+     */
+    private static final String USER_ONLINE_COUNT_PREFIX = "ws:stat:online_user_device_count:";
+
+    /**
+     * 在线iot设备总数 Key
+     */
+    private static final String IOT_ONLINE_COUNT_PREFIX = "ws:stat:online_iot_device_count:";
+
+    /**
+     * 设备最新数据 TTL：24小时（长时间无上报自动过期，判定设备离线）
+     */
     private static final long LATEST_DATA_TTL_HOURS = 24;
+
+    /**
+     * Lua 脚本：仅当值为正数时递减
+     */
+    private static final String DECR_IF_POSITIVE_LUA =
+            "local val = tonumber(redis.call('get', KEYS[1])) " +
+                    "if val and val > 0 then " +
+                    "    return redis.call('decr', KEYS[1]) " +
+                    "end " +
+                    "return 0";
+
+    /**
+     * Lua 脚本：仅当值为正数时递减
+     */
+    private final DefaultRedisScript<Long> decrScript =
+            new DefaultRedisScript<>(DECR_IF_POSITIVE_LUA, Long.class);
 
     private final StringRedisTemplate redisTemplate;
 
@@ -56,24 +94,25 @@ public class DeviceStateStore {
 
     // ==================== Key 构建 ====================
 
-    /** 构建设备最新数据 Key：{userId}:{deviceId}:latest */
-    private String buildLatestKey(String userId, String deviceId) {
-        return userId + ":" + deviceId + LATEST_SUFFIX;
-    }
-
-    /** 构建设备最新数据 Key（使用默认 userId=admin） */
+    /**
+     * 构建设备最新数据 Key（使用默认 ws:iotDevice:latest:iot_deviceId
+     */
     private String buildLatestKey(String deviceId) {
-        return buildLatestKey(DEFAULT_USER_ID, deviceId);
+        return LATEST_PREFIX + deviceId;
     }
 
-    /** 构建在线设备总数 Key：{userId}:deviceOnlineCount */
-    private String buildOnlineCountKey(String userId) {
-        return userId + ONLINE_COUNT_SUFFIX;
+    /**
+     * 构建用户在线设备总数 Key：ws:stat:online_user_device_count:{userId}
+     */
+    private String buildUserOnlineCountKey(String userId) {
+        return USER_ONLINE_COUNT_PREFIX + userId;
     }
 
-    /** 构建在线设备总数 Key（使用默认 userId=admin） */
-    private String buildOnlineCountKey() {
-        return buildOnlineCountKey(DEFAULT_USER_ID);
+    /**
+     * 构建用户在线iot设备总数 Key：ws:stat:online_iot_device_count::{userId}
+     */
+    private String buildIotOnlineCountKey(String userId) {
+        return IOT_ONLINE_COUNT_PREFIX + userId;
     }
 
     // ==================== 设备最新数据操作 ====================
@@ -85,24 +124,39 @@ public class DeviceStateStore {
      * 若 Key 已存在，仅更新数据，不改变在线计数。
      * </p>
      *
-     * @param deviceId 设备ID
-     * @param json     完整设备数据 JSON 字符串
+     * @param deviceId      设备ID
+     * @param deviceDataMap 完整设备数据 Map
      * @return true=新设备上线（Key 新建），false=已有设备数据刷新
      */
-    public boolean updateDeviceLatestData(String deviceId, String json) {
+    public boolean updateDeviceLatestData(String deviceId, Map deviceDataMap) {
         String key = buildLatestKey(deviceId);
-        Boolean isNew = redisTemplate.opsForValue().setIfAbsent(key, json, LATEST_DATA_TTL_HOURS, TimeUnit.HOURS);
-        if (Boolean.TRUE.equals(isNew)) {
+        String lastReportTs = (String) redisTemplate.opsForHash().get(key, "timestamp");
+        //是否是新上线遥感设备
+        boolean isNewTelemetry = ObjectUtils.isEmpty(lastReportTs) || (System.currentTimeMillis() - Long.parseLong(lastReportTs)) > 60000; // 例如60s无上报判定离线
+
+        //Boolean isNew = redisTemplate.opsForValue().setIfAbsent(key, json, LATEST_DATA_TTL_HOURS, TimeUnit.HOURS);
+        //if (wasOffline) {
+        //    // 新设备首次上报，在线数 +1
+        //    incrementOnlineIotCount(DEFAULT_USER_ID);
+        //    log.info("Device online (was offline), INCR online count: {}", deviceId);
+        //    // 触发WS推送：设备上线事件 + 在线数变更
+        //    pushDeviceStatusChange(deviceId, true);
+        //    return true;
+        //}
+        redisTemplate.opsForHash().putAll(key, deviceDataMap);
+        // 刷新TTL（24h无上报自动过期）
+        redisTemplate.expire(key, LATEST_DATA_TTL_HOURS, TimeUnit.HOURS);
+
+        if (Boolean.TRUE.equals(isNewTelemetry)) {
             // 新设备首次上报，在线数 +1
-            incrementOnlineCount();
+            incrementOnlineIotCount(DEFAULT_USER_ID);
             log.info("New device online, INCR online count: {}", deviceId);
             return true;
-        } else {
-            // Key 已存在，仅刷新数据和 TTL
-            redisTemplate.opsForValue().set(key, json, LATEST_DATA_TTL_HOURS, TimeUnit.HOURS);
-            log.debug("Refreshed device latest data: {}", deviceId);
-            return false;
         }
+        log.debug("Refreshed device latest data: {}", deviceId);
+        return true;
+
+
     }
 
     /**
@@ -136,23 +190,15 @@ public class DeviceStateStore {
 
     /**
      * 设备离线：删除最新数据 Key + DECR 在线数
-     * <p>
-     * 仅在 Key 确实存在时执行删除和计数递减，避免重复 DECR。
-     * </p>
+     * 在线设备数量 -1
      *
-     * @param deviceId 设备ID
+     * @param userId 用户ID
      * @return true=成功删除（设备确实离线），false=Key 已不存在
      */
-    public boolean setDeviceOffline(String deviceId) {
-        String key = buildLatestKey(deviceId);
-        Boolean deleted = redisTemplate.delete(key);
-        if (Boolean.TRUE.equals(deleted)) {
-            decrementOnlineCount();
-            log.info("Device offline, DECR online count: {}", deviceId);
-            return true;
-        }
-        log.debug("Device already offline (key not found): {}", deviceId);
-        return false;
+    public boolean userDeviceOffline(String userId) {
+        decrementOnlineUserDevCount(userId);
+        log.info("Device offline, DECR online count: {}", userId);
+        return true;
     }
 
     /**
@@ -164,7 +210,7 @@ public class DeviceStateStore {
         String key = buildLatestKey(deviceId);
         Boolean deleted = redisTemplate.delete(key);
         if (Boolean.TRUE.equals(deleted)) {
-            decrementOnlineCount();
+            decrementOnlineIotDevCount(DEFAULT_USER_ID);
         }
         log.info("Removed device state from Redis: {}", deviceId);
     }
@@ -174,20 +220,50 @@ public class DeviceStateStore {
     /**
      * 在线设备数 +1（原子操作）
      */
-    public void incrementOnlineCount() {
-        redisTemplate.opsForValue().increment(buildOnlineCountKey());
+    public void incrementOnlineIotCount(String userId) {
+        redisTemplate.opsForValue().increment(buildIotOnlineCountKey(userId));
+    }
+
+    /**
+     * 用户在线设备数 +1（原子操作）
+     */
+    public Long incrementOnlineUserDevCount(String userId) {
+        Long count = redisTemplate.opsForValue().increment(buildUserOnlineCountKey(userId));
+        return count == null ? 1 : count;
     }
 
     /**
      * 在线设备数 -1（原子操作，保证不低于 0）
      */
-    public void decrementOnlineCount() {
-        String countKey = buildOnlineCountKey();
-        // 先获取当前值，大于 0 才递减，防止负数
-        String countStr = redisTemplate.opsForValue().get(countKey);
-        if (countStr != null && Long.parseLong(countStr) > 0) {
-            redisTemplate.opsForValue().decrement(countKey);
+    public Long decrementOnlineIotDevCount(String userId) {
+        String countKey = buildIotOnlineCountKey(userId);
+        Long count = redisTemplate.execute(decrScript, Collections.singletonList(countKey));
+        Long result = count == null ? 0 : count;
+
+        // 递减后如果为0，可以触发推送"设备全部离线"事件
+        if (result == 0) {
+            log.info("All iot devices offline for user: {}", userId);
+            // pushAllOfflineEvent(userId);
         }
+
+        return result;
+    }
+
+    /**
+     * 在线设备数 -1（原子操作，保证不低于 0）
+     */
+    public Long decrementOnlineUserDevCount(String userId) {
+        String countKey = buildUserOnlineCountKey(userId);
+        Long count = redisTemplate.execute(decrScript, Collections.singletonList(countKey));
+        Long result = count == null ? 0 : count;
+
+        // 递减后如果为0，可以触发推送"设备全部离线"事件
+        if (result == 0) {
+            log.info("All devices offline for user: {}", userId);
+            // pushAllOfflineEvent(userId);
+        }
+
+        return result;
     }
 
     /**
@@ -195,8 +271,8 @@ public class DeviceStateStore {
      *
      * @return 在线设备数，Key 不存在时返回 0
      */
-    public long getOnlineCount() {
-        String countStr = redisTemplate.opsForValue().get(buildOnlineCountKey());
+    public long getUserDeviceOnlineCount(String userId) {
+        String countStr = redisTemplate.opsForValue().get(buildUserOnlineCountKey(userId));
         if (countStr == null || countStr.isEmpty()) {
             return 0;
         }
@@ -215,27 +291,27 @@ public class DeviceStateStore {
      *
      * @return 在线设备ID集合
      */
-    public Set<String> getOnlineDeviceIds() {
+    public Set<String> getOnlineDeviceIds(String userId) {
         Set<String> onlineIds = new HashSet<>();
-        String pattern = DEFAULT_USER_ID + ":*:" + LATEST_SUFFIX.substring(1); // admin:*:latest
+        String pattern = ONLINE_IOT_DEVICE_LIST_PREFIX + ":" + userId;
 
         ScanOptions options = ScanOptions.scanOptions()
                 .match(pattern)
                 .count(200)
                 .build();
 
-        try (Cursor<String> cursor = redisTemplate.scan(options)) {
-            while (cursor.hasNext()) {
-                String key = cursor.next();
-                // 从 Key 中提取 deviceId：admin:{deviceId}:latest → {deviceId}
-                String deviceId = extractDeviceIdFromKey(key);
-                if (deviceId != null) {
-                    onlineIds.add(deviceId);
-                }
-            }
-        } catch (Exception e) {
-            log.warn("Failed to scan online device keys: {}", e.getMessage());
-        }
+        //try (Cursor<String> cursor = redisTemplate.scan(options)) {
+        //    while (cursor.hasNext()) {
+        //        String key = cursor.next();
+        //        // 从 Key 中提取 deviceId：admin:{deviceId}:latest → {deviceId}
+        //        String deviceId = extractDeviceIdFromKey(key);
+        //        if (deviceId != null) {
+        //            onlineIds.add(deviceId);
+        //        }
+        //    }
+        //} catch (Exception e) {
+        //    log.warn("Failed to scan online device keys: {}", e.getMessage());
+        //}
         return onlineIds;
     }
 
@@ -248,11 +324,11 @@ public class DeviceStateStore {
      * @param key Redis Key
      * @return deviceId，格式不匹配时返回 null
      */
-    private String extractDeviceIdFromKey(String key) {
-        String prefix = DEFAULT_USER_ID + ":";
-        if (!key.startsWith(prefix) || !key.endsWith(LATEST_SUFFIX)) {
-            return null;
-        }
-        return key.substring(prefix.length(), key.length() - LATEST_SUFFIX.length());
-    }
+    //private String extractDeviceIdFromKey(String key) {
+    //    String prefix = DEFAULT_USER_ID + ":";
+    //    if (!key.startsWith(prefix) || !key.endsWith(LATEST_SUFFIX)) {
+    //        return null;
+    //    }
+    //    return key.substring(prefix.length(), key.length() - LATEST_SUFFIX.length());
+    //}
 }

@@ -165,7 +165,7 @@ public class DeviceServiceImpl extends ServiceImpl<DeviceMapper, Device> impleme
     public void updateStatus(String deviceId, int status) {
         // 设备在线状态统一由 Redis 管理
         if (status == DeviceOnlineStatusEnum.OFFLINE.getCode()) {
-            deviceStateStore.setDeviceOffline(deviceId);
+            deviceStateStore.userDeviceOffline(deviceId);
         }
         // 在线状态由 MQTT 上报时 MqttMessageHandler 自动写入 Redis，此处无需额外处理
     }

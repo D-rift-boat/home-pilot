@@ -63,13 +63,13 @@ public class DashboardController {
         DashboardStatsRespDTO stats = new DashboardStatsRespDTO();
 
         // 1. 从 Redis 获取在线设备数（原子计数器）
-        stats.setOnlineCount((int) deviceStateStore.getOnlineCount());
+        stats.setOnlineCount((int) deviceStateStore.getUserDeviceOnlineCount("admin"));
 
         // 2. 确定要查询的设备ID
         String deviceId = request.getDeviceId();
         if (deviceId == null || deviceId.isEmpty()) {
             // 未指定设备，取第一个在线设备
-            Set<String> onlineIds = deviceStateStore.getOnlineDeviceIds();
+            Set<String> onlineIds = deviceStateStore.getOnlineDeviceIds("admin");
             if (!onlineIds.isEmpty()) {
                 deviceId = onlineIds.iterator().next();
             }
@@ -106,7 +106,7 @@ public class DashboardController {
         List<OnlineDeviceRespDTO> result = new ArrayList<>();
 
         // 1. 从 Redis 获取所有在线设备ID
-        Set<String> onlineIds = deviceStateStore.getOnlineDeviceIds();
+        Set<String> onlineIds = deviceStateStore.getOnlineDeviceIds("admin");
         if (onlineIds.isEmpty()) {
             return Result.ok(result);
         }

@@ -2,11 +2,10 @@ package com.dboat.iot.utils;
 
 import com.dboat.iot.config.InfluxDBConfig;
 import com.dboat.iot.entity.SensorData;
-import com.influxdb.client.InfluxDBClient;
-import com.influxdb.client.QueryApi;
-import com.influxdb.client.WriteApiBlocking;
+import com.influxdb.client.*;
 import com.influxdb.client.domain.WritePrecision;
 import com.influxdb.client.write.Point;
+import com.influxdb.client.write.events.WriteErrorEvent;
 import com.influxdb.query.FluxRecord;
 import com.influxdb.query.FluxTable;
 import org.slf4j.Logger;
@@ -49,9 +48,20 @@ public class InfluxDBUtils {
                 .addField("bmp280_status", safeInt(sensorData.getBmp280Status()))
                 .time(sensorData.getReportTime(), WritePrecision.NS);
 
-        WriteApiBlocking writeApi = influxDBClient.getWriteApiBlocking();
+        WriteOptions options = WriteOptions.builder()
+                .batchSize(200)
+                .flushInterval(1000)
+                .bufferLimit(5000)
+                .maxRetries(3)
+                .build();
+        WriteApi writeApi = influxDBClient.getWriteApi(options);
+        // 注册写入错误监听
+        writeApi.listenEvents(WriteErrorEvent.class, event -> {
+            Throwable throwable = event.getThrowable();
+            log.error("InfluxDB写入事件异常", throwable);
+        });
         writeApi.writePoint(bucket, org, point);
-        log.debug("Written sensor telemetry point for device: {}", sensorData.getDeviceId());
+        log.debug("Async write sensor telemetry point for device: {}", sensorData.getDeviceId());
     }
 
     /**
