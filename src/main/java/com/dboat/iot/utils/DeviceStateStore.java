@@ -53,6 +53,9 @@ public class DeviceStateStore {
 
     private static final Logger log = LoggerFactory.getLogger(DeviceStateStore.class);
 
+    /** Redisson Lua 脚本执行时使用的 String Codec 全限定类名 */
+    private static final String STRING_CODEC_NAME = "org.redisson.client.codec.StringCodec";
+
     /**
      * 默认用户ID（前端写死 admin）
      */
@@ -260,7 +263,7 @@ public class DeviceStateStore {
         for (String userId : userIdSet) {
             Long userIotDevOnlineCount = offlineUserIotDev(userId, iotDeviceId);
             WsUploadDataDTO wsUploadDataDTO = new WsUploadDataDTO();
-            wsUploadDataDTO.setType(WsTypeEnum.USER_DEVICE_ONLINE_COUNT.getCode());
+            wsUploadDataDTO.setType(WsTypeEnum.IOT_DEVICE_ONLINE_COUNT.getCode());
             WsUploadDataDTO.DataDTO dataDTO = new WsUploadDataDTO.DataDTO();
             WsUploadDataDTO.DeviceDTO deviceDTO = new WsUploadDataDTO.DeviceDTO();
             deviceDTO.setDeviceId("web-001");
@@ -288,7 +291,7 @@ public class DeviceStateStore {
         for (String userId : userIdSet) {
             Long userIotDevOnlineCount = onlineUserIotDev(userId, iotDeviceId);
             WsUploadDataDTO wsUploadDataDTO = new WsUploadDataDTO();
-            wsUploadDataDTO.setType(WsTypeEnum.USER_DEVICE_ONLINE_COUNT.getCode());
+            wsUploadDataDTO.setType(WsTypeEnum.IOT_DEVICE_ONLINE_COUNT.getCode());
             WsUploadDataDTO.DataDTO dataDTO = new WsUploadDataDTO.DataDTO();
             WsUploadDataDTO.DeviceDTO deviceDTO = new WsUploadDataDTO.DeviceDTO();
             deviceDTO.setDeviceId("web-001");
@@ -338,15 +341,12 @@ public class DeviceStateStore {
      */
     public Long offlineUserIotDev(String userId,String iotDeviceId) {
         String redisKey = IOT_DEVICE_ONLINE_PREFIX + userId;
-        DefaultRedisScript<Long> script = new DefaultRedisScript<>();
-        script.setScriptText(LUA_IOT_OFFLINE);
-        script.setResultType(Long.class);
         IotDevLineDTO iotDevLineDTO = IotDevLineDTO.builder()
                 .deviceId(iotDeviceId)
                 .lastReportTs(String.valueOf(System.currentTimeMillis()))
                 .build();
-        Long remainCount = redissonClient.getScript().eval(
-                StringCodec.INSTANCE,
+        RScript script = redissonClient.getScript(StringCodec.INSTANCE);
+        Long remainCount = script.eval(
                 RScript.Mode.READ_WRITE,
                 LUA_IOT_OFFLINE,
                 RScript.ReturnType.INTEGER,
@@ -371,8 +371,8 @@ public class DeviceStateStore {
                 .deviceId(iotDeviceId)
                 .lastReportTs(String.valueOf(System.currentTimeMillis()))
                 .build();
-        Long remainCount = redissonClient.getScript().eval(
-                StringCodec.INSTANCE,
+        RScript script = redissonClient.getScript(StringCodec.INSTANCE);
+        Long remainCount = script.eval(
                 RScript.Mode.READ_WRITE,
                 LUA_IOT_ONLINE,
                 RScript.ReturnType.INTEGER,

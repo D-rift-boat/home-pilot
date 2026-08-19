@@ -12,8 +12,15 @@ import lombok.Getter;
 @AllArgsConstructor
 public enum WsTypeEnum {
 
-    /** 用户在线设备数量 */
-    USER_DEVICE_ONLINE_COUNT("USER_DEVICE_ONLINE_COUNT", "用户在线设备数量", "USER_DEVICE_ONLINE_COUNT");
+    /**
+     * 用户在线设备数量
+     */
+    USER_DEVICE_ONLINE_COUNT("USER_DEVICE_ONLINE_COUNT", "用户在线设备数量", "USER_DEVICE_ONLINE_COUNT"),
+
+    /**
+     * iot在线设备数量
+     */
+    IOT_DEVICE_ONLINE_COUNT("IOT_DEVICE_ONLINE_COUNT", "在线iot设备数量", "IOT_DEVICE_ONLINE_COUNT");
 
     /** 状态码值，用于 Redis 存储和接口传输 */
     private final String code;
