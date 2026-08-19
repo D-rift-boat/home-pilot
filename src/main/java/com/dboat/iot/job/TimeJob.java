@@ -37,6 +37,11 @@ public class TimeJob {
 	@Resource
 	private DeviceWebSocketHandler deviceWebSocketHandler;
 
+	/**
+	 * 定时清理过期iot设备在线列表
+	 */
+
+
 
 	/**
 	 * 定时清理本地缓存过期会话（每 30 秒执行一次）

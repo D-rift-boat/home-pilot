@@ -69,3 +69,21 @@ CREATE TABLE IF NOT EXISTS `device_log` (
     KEY `idx_log_time` (`log_time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='设备日志表 / Device log table';
 
+
+-- ----------------------------
+-- 用户-设备关系表 / User-Device relation table
+-- ----------------------------
+DROP TABLE IF EXISTS `user_device_rel`;
+CREATE TABLE `user_device_rel` (
+                                        `id`          VARCHAR(64)  NOT NULL COMMENT '主键ID / Primary key (UUID)',
+                                        `user_id`     VARCHAR(64)  NOT NULL COMMENT '用户ID / User ID',
+                                        `device_id`   VARCHAR(64)  NOT NULL COMMENT '设备ID / Device ID',
+                                        `sub_type`    TINYINT      NOT NULL DEFAULT 1 COMMENT '订阅类型: 1=拥有者, 2=共享订阅 / Subscription type',
+                                        `create_time` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间 / Created time',
+                                        `update_time` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间 / Updated time',
+                                        PRIMARY KEY (`id`),
+                                        UNIQUE KEY `uk_user_device` (`user_id`, `device_id`),
+                                        KEY `idx_user_id` (`user_id`),
+                                        KEY `idx_device_id` (`device_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户-设备关系表 / User-Device relation table';
+

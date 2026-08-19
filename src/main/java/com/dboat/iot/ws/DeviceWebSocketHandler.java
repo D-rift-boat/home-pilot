@@ -1,21 +1,13 @@
 package com.dboat.iot.ws;
 
 import com.alibaba.fastjson2.JSONObject;
-import com.dboat.iot.dto.mqtt.MqttMessageHeader;
-import com.dboat.iot.dto.mqtt.MqttUpDataMessage;
 import com.dboat.iot.dto.ws.WsUploadDataDTO;
 import com.dboat.iot.enums.WsTypeEnum;
-import com.dboat.iot.utils.DeviceStateStore;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.data.redis.core.Cursor;
-import org.springframework.data.redis.core.ScanOptions;
 import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
@@ -23,9 +15,6 @@ import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 
 import java.io.IOException;
-import java.net.URI;
-import java.net.URLDecoder;
-import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -74,9 +63,6 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
 
     @Resource
     private ObjectMapper objectMapper;
-
-    @Resource
-    private DeviceStateStore deviceStateStore;
 
     // ==================== 连接生命周期 ====================
 
@@ -189,7 +175,7 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
             sessionMap.entrySet().removeIf(entry -> entry.getKey().equals(session.getId()));
 
             // 用户下线  提取userId  更新用户在线设备数
-            String userId = redisSessionKey.substring(WS_ROUTER_PREFIX.length());
+            //String userId = redisSessionKey.substring(WS_ROUTER_PREFIX.length());
             Long userDeviceOnlineCount = redisTemplate.opsForHash().size(redisSessionKey);
             //Long onlineUserDevCount = deviceStateStore.decrementOnlineUserDevCount(userId);
             WsUploadDataDTO wsUploadDataDTO = new WsUploadDataDTO();

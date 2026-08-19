@@ -26,6 +26,8 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
+import static com.dboat.iot.common.constants.MqttConstants.IOT_DEVICE_ONLINE_PREFIX;
+
 /**
  * MQTT 消息处理器
  * <p>
@@ -129,13 +131,16 @@ public class MqttMessageHandler {
 
         try {
             if (topic.startsWith(TOPIC_SENSOR_UPLOAD_PREFIX)) {
+                // 传感器数据主题
                 handleSensorUpload(topic, upDataMessage);
             } else if (topic.startsWith(TOPIC_CLIENT_STAUTS_PREFIX)) {
+                // 设备状态主题
                 if (header.getMsgType().equals(MqttConstants.ONLINE)){
                     log.info("device online: {}", topic);
+                    handleIotDeviceConnect(topic, upDataMessage);
                 } else if (header.getMsgType().equals(MqttConstants.OFFLINE)) {
-                    handleDeviceDisconnected(topic, upDataMessage);
                     log.info("device offline: {}", topic);
+                    handleIotDeviceDisconnected(topic, upDataMessage);
                 }
             } else {
                 log.warn("Unhandled MQTT topic: {}", topic);
@@ -196,13 +201,10 @@ public class MqttMessageHandler {
         SensorData sensorData = buildSensorData(deviceId, payload, deviceStatus, aht20Status, bmp280Status);
         sensorDataService.saveSensorData(sensorData);
 
-        // ========== 刷新 Redis 设备快照 + 维护在线数 ==========
+        // ========== 刷新 Redis 设备快照 、维护用户在线iot设备列表、维护在线iot设备数 ==========
         // 构建完整设备数据 JSON（存入 {userId}:{deviceId}:latest，TTL 24h）
         Map deviceDataMap = buildDeviceLatestMap(deviceId, deviceStatus, aht20Status, bmp280Status, payload, header.getTimestamp());
-        boolean isNewDevice = deviceStateStore.updateDeviceLatestData(deviceId, deviceDataMap);
-        if (isNewDevice) {
-            log.info("Device first report / re-online, online count incremented: {}", deviceId);
-        }
+        deviceStateStore.updateDeviceLatestData(deviceId, deviceDataMap);
 
         // ========== WebSocket 实时推送 ==========
         try {
@@ -253,13 +255,40 @@ public class MqttMessageHandler {
     }
 
     /**
+     * 处理 mqtt client 设备上线连接事件
+     * 主题格式:
+     * <p>
+     * 设备上线时：新增/刷新 用户在线iot设备列表、ws 推送在线iot设备数量
+     * </p>
+     */
+    private void handleIotDeviceConnect(String topic, MqttUpDataMessage message) {
+        // 从主题中提取 clientId（即 device_id）
+        if (ObjectUtils.isEmpty(message.getHeader())) {
+            log.warn("Invalid disconnected topic format: {}", topic);
+            return;
+        }
+        String deviceId = message.getHeader().getDeviceId();
+        log.warn("Device connected event received for device: {}", deviceId);
+
+        // 2. 从 InfluxDB 查询离线前最后一条传感器数据作为离线上下文
+        String offlineContext = buildOfflineContext(deviceId);
+
+        // 3. 异步记录设备离线日志
+        deviceLogService.logDeviceOnline(deviceId, offlineContext);
+
+        // 新增/刷新 用户在线iot设备列表 并ws通知订阅设备的相关用户
+        deviceStateStore.iotDeviceOnline(deviceId);
+
+    }
+
+    /**
      * 处理 EMQX 设备断连事件
      * 主题格式: $SYS/brokers/{node}/clients/{client_id}/disconnected
      * <p>
      * 设备离线时：删除 Redis 最新数据 Key + DECR 在线数 + 记录离线日志
      * </p>
      */
-    private void handleDeviceDisconnected(String topic, MqttUpDataMessage message) {
+    private void handleIotDeviceDisconnected(String topic, MqttUpDataMessage message) {
         // 从主题中提取 clientId（即 device_id）
         if (ObjectUtils.isEmpty(message.getHeader())) {
             log.warn("Invalid disconnected topic format: {}", topic);
@@ -268,22 +297,15 @@ public class MqttMessageHandler {
         String deviceId = message.getHeader().getDeviceId();
         log.warn("Device disconnected event received for device: {}", deviceId);
 
-        // 1. 删除 Redis 最新数据 Key + DECR 在线数
-        deviceStateStore.userDeviceOffline(deviceId);
+        // 1. 更新用户在线iot设备列表 + ws 推送iot设备数量 并ws通知订阅设备的相关用户
+        deviceStateStore.iotDeviceOffline(deviceId);
 
         // 2. 从 InfluxDB 查询离线前最后一条传感器数据作为离线上下文
         String offlineContext = buildOfflineContext(deviceId);
 
-        // 3. 记录设备离线日志
+        // 3. 异步记录设备离线日志
         deviceLogService.logDeviceOffline(deviceId, offlineContext);
 
-        // ========== WebSocket 实时推送（设备离线通知） ==========
-        try {
-            String wsMessage = buildDeviceOfflineMessage(deviceId);
-            webSocketHandler.broadcastToAll(wsMessage);
-        } catch (Exception e) {
-            log.warn("Failed to broadcast WS offline message for device [{}]: {}", deviceId, e.getMessage());
-        }
     }
 
     /**

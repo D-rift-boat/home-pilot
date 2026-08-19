@@ -12,6 +12,8 @@ import com.dboat.iot.exception.BusinessException;
 import com.dboat.iot.mapper.DeviceMapper;
 import com.dboat.iot.service.DeviceService;
 import com.dboat.iot.utils.DeviceStateStore;
+import jakarta.annotation.Resource;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -29,12 +31,8 @@ import org.springframework.util.StringUtils;
 public class DeviceServiceImpl extends ServiceImpl<DeviceMapper, Device> implements DeviceService {
 
     /** Redis 设备状态存储工具 */
-    private final DeviceStateStore deviceStateStore;
-
-    /** 构造器注入 Redis 状态存储 */
-    public DeviceServiceImpl(DeviceStateStore deviceStateStore) {
-        this.deviceStateStore = deviceStateStore;
-    }
+    @Resource
+    private DeviceStateStore deviceStateStore;
 
     /**
      * 手动创建设备

@@ -40,6 +40,7 @@ public class DashboardController {
 
     /** 设备服务（获取设备信息） */
     private final DeviceService deviceService;
+
     /** Redis 设备状态存储（获取实时数据 + 在线设备） */
     private final DeviceStateStore deviceStateStore;
 
