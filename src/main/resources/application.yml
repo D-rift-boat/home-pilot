@@ -86,6 +86,8 @@ mqtt:
     - iot/device/status/+
   subscribe-qos:
     - 1
+  webHookSwitch: true
+
 
 # InfluxDB
 influxdb:

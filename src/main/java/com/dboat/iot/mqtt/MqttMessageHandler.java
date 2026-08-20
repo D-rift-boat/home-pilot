@@ -15,6 +15,7 @@ import org.apache.commons.lang3.ObjectUtils;
 import org.eclipse.paho.client.mqttv3.MqttMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
@@ -83,6 +84,8 @@ public class MqttMessageHandler {
     private final DeviceStateStore deviceStateStore;
     /** WebSocket 处理器，用于向前端广播实时数据 */
     private final DeviceWebSocketHandler webSocketHandler;
+    @Value("${mqtt.webHookSwitch}")
+    private String webHookSwitch;
 
     /**
      * 构造方法注入依赖（使用 @Lazy 解决与 MqttClientManager 的循环依赖）
@@ -134,13 +137,16 @@ public class MqttMessageHandler {
                 // 传感器数据主题
                 handleSensorUpload(topic, upDataMessage);
             } else if (topic.startsWith(TOPIC_CLIENT_STAUTS_PREFIX)) {
-                // 设备状态主题
-                if (header.getMsgType().equals(MqttConstants.ONLINE)){
-                    log.info("device online: {}", topic);
-                    handleIotDeviceConnect(topic, upDataMessage);
-                } else if (header.getMsgType().equals(MqttConstants.OFFLINE)) {
-                    log.info("device offline: {}", topic);
-                    handleIotDeviceDisconnected(topic, upDataMessage);
+                // 若不启用 WebHook，则使用固件固定上下线机制 处理设备状态主题
+                if (!"true".equals(webHookSwitch)){
+                    // 设备状态主题
+                    if (header.getMsgType().equals(MqttConstants.ONLINE)){
+                        log.info("device online: {}", topic);
+                        handleIotDeviceConnect(topic, upDataMessage);
+                    } else if (header.getMsgType().equals(MqttConstants.OFFLINE)) {
+                        log.info("device offline: {}", topic);
+                        handleIotDeviceDisconnected(topic, upDataMessage);
+                    }
                 }
             } else {
                 log.warn("Unhandled MQTT topic: {}", topic);
