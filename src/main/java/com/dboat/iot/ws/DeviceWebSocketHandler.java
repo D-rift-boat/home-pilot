@@ -104,7 +104,7 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
         WsUploadDataDTO.DataDTO dataDTO = new WsUploadDataDTO.DataDTO();
         WsUploadDataDTO.DeviceDTO deviceDTO = new WsUploadDataDTO.DeviceDTO();
         deviceDTO.setDeviceId("web-001");
-        dataDTO.setUserDeviceOnlineCount(userDeviceOnlineCount);
+        dataDTO.setUserDeviceOnlineCount(String.valueOf(userDeviceOnlineCount));
         wsUploadDataDTO.setData((dataDTO));
         wsUploadDataDTO.setDevice(deviceDTO);
         wsUploadDataDTO.setData((dataDTO));
@@ -183,7 +183,7 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
             WsUploadDataDTO.DataDTO dataDTO = new WsUploadDataDTO.DataDTO();
             WsUploadDataDTO.DeviceDTO deviceDTO = new WsUploadDataDTO.DeviceDTO();
             deviceDTO.setDeviceId("web-001");
-            dataDTO.setUserDeviceOnlineCount(userDeviceOnlineCount);
+            dataDTO.setUserDeviceOnlineCount(String.valueOf(userDeviceOnlineCount));
             wsUploadDataDTO.setData((dataDTO));
             wsUploadDataDTO.setDevice(deviceDTO);
             broadcastToAll(JSONObject.toJSONString(wsUploadDataDTO));

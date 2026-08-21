@@ -43,6 +43,9 @@ public class EmqxWebhookController {
         //异步提交，立刻返回，不阻塞http回调
         //iotEventTaskExecutor.execute(() -> {
         //});
+        if("home-pilot-server".equals(dto.getClientid())){
+            return ResponseEntity.ok().build();
+        }
         DeviceConnectDomainEvent domainEvent = buildOnlineDomainEvent(dto);
         deviceConnectEventService.handleConnectDomainEvent(domainEvent);
         return ResponseEntity.ok().build();

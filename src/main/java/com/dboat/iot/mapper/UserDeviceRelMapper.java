@@ -28,4 +28,12 @@ public interface UserDeviceRelMapper extends BaseMapper<UserDeviceRel> {
      */
     @Select("SELECT user_id FROM user_device_rel WHERE device_id = #{deviceId}")
     List<String> selectUserIdsByDeviceId(@Param("deviceId") String deviceId);
+
+    /**
+     * 根据用户ID查询所有订阅设备的ID列表
+     * @param userId
+     * @return List
+     */
+    @Select("SELECT device_id FROM user_device_rel WHERE user_id = #{userId}")
+    List<String> selectDeviceIdsByUserId(@Param("userId") String userId);
 }

@@ -461,7 +461,7 @@ public class MqttMessageHandler {
 
         // data 部分：跨页面共享的实时汇总数据
         JSONObject data = new JSONObject();
-        //long onlineCount = deviceStateStore.getUserDeviceOnlineCount();
+        //long onlineCount = deviceStateStore.getUserIotDeviceOnlineCount();
         MqttUpEnvData env = payload.getEnvData();
         if (env != null) {
             data.put("tempAht", env.getTempAht());

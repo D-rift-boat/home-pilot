@@ -21,4 +21,8 @@ public class MqttConstants {
 	 * iot设备-订阅者列表
 	 */
 	public static final String IOT_DEVICE_SUB_PREFIX = "iot:device:sub:";
+	/**
+	 * 用户-订阅设备列表
+	 */
+	public static final String USER_IOT_DEVICE_SUB_PREFIX = "iot:user:sub:";
 }

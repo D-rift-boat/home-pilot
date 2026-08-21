@@ -6,11 +6,13 @@ import com.dboat.iot.dto.ws.WsUploadDataDTO;
 import com.dboat.iot.enums.WsTypeEnum;
 import com.dboat.iot.ws.DeviceWebSocketHandler;
 import jakarta.annotation.Resource;
+import org.apache.commons.lang3.ObjectUtils;
 import org.redisson.api.RScript;
 import org.redisson.api.RedissonClient;
 import org.redisson.client.codec.StringCodec;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.redis.core.Cursor;
 import org.springframework.data.redis.core.ScanOptions;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
@@ -23,6 +25,7 @@ import java.util.*;
 import java.util.concurrent.TimeUnit;
 
 import static com.dboat.iot.common.constants.MqttConstants.IOT_DEVICE_ONLINE_PREFIX;
+import static com.dboat.iot.common.constants.WebSocketConstants.WS_ROUTER_PREFIX;
 
 /**
  * 设备实时状态存储（Redis State Store）—— 按设计文档新 Key 规范重构
@@ -210,7 +213,7 @@ public class DeviceStateStore {
      * @return JSON 字符串，Key 不存在时返回 null
      */
     public String getDeviceLatestData(String deviceId) {
-        return (String) stringRedisTemplate.opsForValue().get(buildLatestKey(deviceId));
+        return stringRedisTemplate.opsForValue().get(buildLatestKey(deviceId));
     }
 
     /**
@@ -231,6 +234,62 @@ public class DeviceStateStore {
             return null;
         }
     }
+
+    /**
+     * 获取设备最新数据并解析为 JSONObject
+     *
+     * @param userId 设备ID
+     * @return JSONObject，Key 不存在或解析失败时返回 null
+     */
+    public WsUploadDataDTO getIotDeviceLatestData(String userId) {
+        // 获取用户订阅设备列表
+        List<String> subscribedDeviceIds = userDeviceRelService.getSubscribedDeviceIds(userId);
+        if(ObjectUtils.isEmpty(subscribedDeviceIds)){
+            return new WsUploadDataDTO();
+        }
+        // TODO 暂时只取第一个设备 的最新数据快照
+        Map<Object, Object> map = stringRedisTemplate.opsForHash().entries(buildLatestKey(subscribedDeviceIds.get(0)));
+        if (map == null || map.isEmpty()) {
+            return new WsUploadDataDTO();
+        }
+
+        WsUploadDataDTO.DataDTO dataDTO = WsUploadDataDTO.DataDTO.builder()
+                .tempAht(getStr(map, "tempAht"))
+                .humidity(getStr(map, "humidity"))
+                .pressureHpa(getStr(map, "pressureHpa"))
+                .altitude(getStr(map, "altitude"))
+                .iotDeviceOnlineCount(getStr(map, "iotDeviceOnlineCount"))
+                .userDeviceOnlineCount(getStr(map, "userDeviceOnlineCount"))
+                .build();
+
+        WsUploadDataDTO.DeviceDTO deviceDTO = WsUploadDataDTO.DeviceDTO.builder()
+                .deviceId(getStr(map, "deviceId"))
+                .deviceStatus(getStr(map, "deviceStatus"))
+                .aht20Status(getStr(map, "aht20Status"))
+                .bmp280Status(getStr(map, "bmp280Status"))
+                .tempBmp(getStr(map, "tempBmp"))
+                .build();
+
+        // type、timestamp 程序内部生成，不从redis读取
+        return WsUploadDataDTO.of(dataDTO, deviceDTO);
+
+    }
+
+    /**
+     * 读取hash字段，null/空字符串统一返回null
+     */
+    private static String getStr(Map<Object, Object> map, String field) {
+        Object val = map.get(field);
+        if (val == null) {
+            return null;
+        }
+        String raw = val.toString().trim();
+        if ("".equals(raw) || "null".equalsIgnoreCase(raw)) {
+            return null;
+        }
+        return raw;
+    }
+
 
     /**
      * 设备离线：删除最新数据 Key + DECR 在线数
@@ -262,7 +321,7 @@ public class DeviceStateStore {
             WsUploadDataDTO.DataDTO dataDTO = new WsUploadDataDTO.DataDTO();
             WsUploadDataDTO.DeviceDTO deviceDTO = new WsUploadDataDTO.DeviceDTO();
             deviceDTO.setDeviceId("web-001");
-            dataDTO.setIotDeviceOnlineCount(userIotDevOnlineCount);
+            dataDTO.setIotDeviceOnlineCount(String.valueOf(userIotDevOnlineCount));
             wsUploadDataDTO.setData((dataDTO));
             wsUploadDataDTO.setDevice(deviceDTO);
             webSocketHandler.broadcastToAll(JSONObject.toJSONString(wsUploadDataDTO));
@@ -290,7 +349,7 @@ public class DeviceStateStore {
             WsUploadDataDTO.DataDTO dataDTO = new WsUploadDataDTO.DataDTO();
             WsUploadDataDTO.DeviceDTO deviceDTO = new WsUploadDataDTO.DeviceDTO();
             deviceDTO.setDeviceId("web-001");
-            dataDTO.setIotDeviceOnlineCount(userIotDevOnlineCount);
+            dataDTO.setIotDeviceOnlineCount(String.valueOf(userIotDevOnlineCount));
             wsUploadDataDTO.setData((dataDTO));
             wsUploadDataDTO.setDevice(deviceDTO);
             webSocketHandler.broadcastToAll(JSONObject.toJSONString(wsUploadDataDTO));
@@ -397,17 +456,33 @@ public class DeviceStateStore {
     }
 
     /**
-     * 获取在线设备总数
+     * 获取用户在线iot设备总数
      *
      * @return 在线设备数，Key 不存在时返回 0
      */
-    public long getUserDeviceOnlineCount(String userId) {
-        String countStr = (String) stringRedisTemplate.opsForValue().get(buildUserOnlineCountKey(userId));
-        if (countStr == null || countStr.isEmpty()) {
-            return 0;
+    public long getUserIotDeviceOnlineCount(String userId) {
+        String redisKey = IOT_DEVICE_ONLINE_PREFIX + userId;
+
+        Long countStr = stringRedisTemplate.opsForSet().size(redisKey);
+        if (ObjectUtils.isNotEmpty(countStr)) {
+            countStr = 0L;
         }
-        long count = Long.parseLong(countStr);
-        return Math.max(count, 0);
+        return countStr;
+    }
+
+    /**
+     * 获取用户在线设备总数
+     *
+     * @return 在线设备数，Key 不存在时返回 0
+     */
+    public Long getUserDeviceOnlineCount(String userId) {
+        String redisKey = WS_ROUTER_PREFIX + userId;
+
+        Long countStr = stringRedisTemplate.opsForHash().size(redisKey);
+        if (ObjectUtils.isNotEmpty(countStr)) {
+            countStr = 0L;
+        }
+        return countStr;
     }
 
     // ==================== 在线设备扫描 ====================
@@ -422,27 +497,13 @@ public class DeviceStateStore {
      * @return 在线设备ID集合
      */
     public Set<String> getOnlineDeviceIds(String userId) {
-        Set<String> onlineIds = new HashSet<>();
-        String pattern = ONLINE_IOT_DEVICE_LIST_PREFIX + ":" + userId;
+        String redisKey = IOT_DEVICE_ONLINE_PREFIX + userId;
 
-        ScanOptions options = ScanOptions.scanOptions()
-                .match(pattern)
-                .count(200)
-                .build();
-
-        //try (Cursor<String> cursor = stringRedisTemplate.scan(options)) {
-        //    while (cursor.hasNext()) {
-        //        String key = cursor.next();
-        //        // 从 Key 中提取 deviceId：admin:{deviceId}:latest → {deviceId}
-        //        String deviceId = extractDeviceIdFromKey(key);
-        //        if (deviceId != null) {
-        //            onlineIds.add(deviceId);
-        //        }
-        //    }
-        //} catch (Exception e) {
-        //    log.warn("Failed to scan online device keys: {}", e.getMessage());
-        //}
-        return onlineIds;
+        Set<String> members = stringRedisTemplate.opsForSet().members(redisKey);
+        if (ObjectUtils.isEmpty(members)) {
+            members = Collections.emptySet();
+        }
+        return members;
     }
 
     /**

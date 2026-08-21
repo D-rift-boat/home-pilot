@@ -6,6 +6,7 @@ import com.dboat.iot.entity.UserDeviceRel;
 import com.dboat.iot.mapper.UserDeviceRelMapper;
 import com.dboat.iot.service.UserDeviceRelService;
 import jakarta.annotation.Resource;
+import org.apache.commons.lang3.ObjectUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.RedisTemplate;
@@ -16,6 +17,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 import static com.dboat.iot.common.constants.MqttConstants.IOT_DEVICE_SUB_PREFIX;
+import static com.dboat.iot.common.constants.MqttConstants.USER_IOT_DEVICE_SUB_PREFIX;
 
 /**
  * 用户-设备关系业务服务实现类
@@ -81,6 +83,34 @@ public class UserDeviceRelServiceImpl extends ServiceImpl<UserDeviceRelMapper, U
         }
 
         return userIds != null ? Set.copyOf(userIds) : Set.of();
+    }
+
+    @Override
+    public List<String> getSubscribedDeviceIds(String userId) {
+        String redisKey = USER_IOT_DEVICE_SUB_PREFIX + userId;
+
+        // 1. 优先从 Redis 读取订阅者列表
+        Set<Object> cachedUserIds = redisTemplate.opsForSet().members(redisKey);
+        if (cachedUserIds != null && !cachedUserIds.isEmpty()) {
+            log.debug("Cache hit for device subscriber list: {}", userId);
+            return cachedUserIds.stream()
+                    .map(Object::toString)
+                    .collect(Collectors.toList());
+        }
+
+        // 2. Redis 未命中，回源查询数据库
+        log.info("Cache miss for device subscriber list: {}, fallback to DB", userId);
+        List<String> deviceIds = baseMapper.selectDeviceIdsByUserId(userId);
+
+        // 3. 将查询结果回填到 Redis Set 缓存
+        if (ObjectUtils.isNotEmpty(deviceIds)) {
+            String[] deviceIdArray = deviceIds.toArray(new String[0]);
+            redisTemplate.opsForSet().add(redisKey, (Object[]) deviceIdArray);
+            log.info("Cached {} subscribers for device [{}] to Redis", deviceIds.size(), userId);
+        }
+
+        return ObjectUtils.isNotEmpty(deviceIds) ? deviceIds : List.of();
+        //return deviceIds != null ? Set.copyOf(deviceIds) : Set.of();
     }
 
     /**

@@ -18,13 +18,13 @@ public class WsUploadDataDTO {
 	private String type;
 
 	/** 实时传感器数据 */
-	private DataDTO data;
+	private DataDTO data = new DataDTO();
 
 	/** 设备信息 */
-	private DeviceDTO device;
+	private DeviceDTO device = new DeviceDTO();
 
 	/** 时间戳（毫秒） */
-	private Long timestamp;
+	private String timestamp;
 
 	// ==================== 内部类 ====================
 
@@ -34,17 +34,17 @@ public class WsUploadDataDTO {
 	@AllArgsConstructor
 	public static class DataDTO {
 		/** AHT20温度（℃） */
-		private Double tempAht;
+		private String tempAht;
 		/** 湿度（%） */
-		private Double humidity;
+		private String humidity;
 		/** 气压（hPa） */
-		private Double pressureHpa;
+		private String pressureHpa;
 		/** 海拔（m） */
-		private Double altitude;
+		private String altitude;
 		/** IoT设备在线数量 */
-		private Long iotDeviceOnlineCount;
+		private String iotDeviceOnlineCount;
 		/** 用户前端设备在线数量 */
-		private Long userDeviceOnlineCount;
+		private String userDeviceOnlineCount;
 	}
 
 	@Data
@@ -55,13 +55,13 @@ public class WsUploadDataDTO {
 		/** 设备ID */
 		private String deviceId;
 		/** 设备状态 */
-		private Long deviceStatus;
+		private String deviceStatus;
 		/** AHT20传感器状态 */
-		private Long aht20Status;
+		private String aht20Status;
 		/** BMP280传感器状态 */
-		private Long bmp280Status;
+		private String bmp280Status;
 		/** BMP280温度（℃） */
-		private Double tempBmp;
+		private String tempBmp;
 	}
 
 	// ==================== 便捷方法 ====================
@@ -72,7 +72,7 @@ public class WsUploadDataDTO {
 				.type("REAL_TIME_DATA")
 				.data(data)
 				.device(device)
-				.timestamp(System.currentTimeMillis())
+				.timestamp(String.valueOf(System.currentTimeMillis()))
 				.build();
 	}
 }

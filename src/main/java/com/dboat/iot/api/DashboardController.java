@@ -1,21 +1,24 @@
 package com.dboat.iot.api;
 
 import com.alibaba.fastjson2.JSONObject;
-import com.dboat.iot.dto.request.DashboardStatsReqDTO;
-import com.dboat.iot.dto.response.DashboardStatsRespDTO;
+import com.dboat.iot.dto.request.TopDashboardDataReqDTO;
 import com.dboat.iot.dto.response.OnlineDeviceRespDTO;
 import com.dboat.iot.dto.response.Result;
+import com.dboat.iot.dto.ws.WsUploadDataDTO;
 import com.dboat.iot.entity.Device;
 import com.dboat.iot.service.DeviceService;
 import com.dboat.iot.utils.DeviceStateStore;
+import com.dboat.iot.ws.DeviceWebSocketHandler;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.annotation.Resource;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -44,6 +47,10 @@ public class DashboardController {
     /** Redis 设备状态存储（获取实时数据 + 在线设备） */
     private final DeviceStateStore deviceStateStore;
 
+    /** WebSocket 处理器，用于向前端广播实时数据 */
+    @Resource
+    private DeviceWebSocketHandler webSocketHandler;
+
     /** 构造器注入依赖 */
     public DashboardController(DeviceService deviceService,
                                 DeviceStateStore deviceStateStore) {
@@ -58,40 +65,33 @@ public class DashboardController {
      * 前端实时监控页面定时轮询此接口（建议 5~10 秒间隔）。
      * </p>
      */
-    @PostMapping("/stats")
+    @PostMapping("/getTopDashboardData")
     @Operation(summary = "面板统计数据", description = "获取设备在线数 + 当前温湿度/气压/海拔")
-    public Result<DashboardStatsRespDTO> getStats(@Valid @RequestBody DashboardStatsReqDTO request) {
-        DashboardStatsRespDTO stats = new DashboardStatsRespDTO();
+    public Result<WsUploadDataDTO> getTopDashboardData(@Valid @RequestBody TopDashboardDataReqDTO request) {
 
-        // 1. 从 Redis 获取在线设备数（原子计数器）
-        stats.setOnlineCount((int) deviceStateStore.getUserDeviceOnlineCount("admin"));
+        // 1. 从 Redis 获取用户在线设备数
+        String userId = request.getUserId();
+        Long userDeviceOnlineCount = deviceStateStore.getUserDeviceOnlineCount(userId);
+        //deviceStateStore.getUserIotDeviceOnlineCount("admin");
 
         // 2. 确定要查询的设备ID
-        String deviceId = request.getDeviceId();
-        if (deviceId == null || deviceId.isEmpty()) {
+        Set<String> onlineIds = new HashSet<>();
+        if (userId == null || userId.isEmpty()) {
             // 未指定设备，取第一个在线设备
-            Set<String> onlineIds = deviceStateStore.getOnlineDeviceIds("admin");
-            if (!onlineIds.isEmpty()) {
-                deviceId = onlineIds.iterator().next();
-            }
+			onlineIds = deviceStateStore.getOnlineDeviceIds(userId);
+			//if (!onlineIds.isEmpty()) {
+            //    deviceId = onlineIds.iterator().next();
+            //}
         }
+
+        int iotDeviceOnlineCount = onlineIds.size();
 
         // 3. 从 Redis 获取设备最新快照数据（MQTT 上报时写入）
-        if (deviceId != null) {
-            JSONObject latestData = deviceStateStore.getDeviceLatestDataAsJson(deviceId);
-            if (latestData != null) {
-                stats.setTemperatureAht(toBigDecimal(latestData.get("tempAht")));
-                stats.setHumidity(toBigDecimal(latestData.get("humidity")));
-                stats.setPressureHpa(toBigDecimal(latestData.get("pressureHpa")));
-                stats.setAltitude(toBigDecimal(latestData.get("altitude")));
-                Long ts = latestData.getLong("timestamp");
-                if (ts != null) {
-                    stats.setReportTime(Instant.ofEpochMilli(ts));
-                }
-            }
-        }
+        WsUploadDataDTO latestData = deviceStateStore.getIotDeviceLatestData(userId);
+        latestData.getData().setIotDeviceOnlineCount(String.valueOf(iotDeviceOnlineCount));
+        latestData.getData().setUserDeviceOnlineCount(String.valueOf(userDeviceOnlineCount));
 
-        return Result.ok(stats);
+        return Result.ok(latestData);
     }
 
     /**

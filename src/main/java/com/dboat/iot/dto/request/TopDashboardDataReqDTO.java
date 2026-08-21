@@ -16,9 +16,9 @@ import lombok.EqualsAndHashCode;
 @Data
 @EqualsAndHashCode(callSuper = true)
 @Schema(description = "仪表盘统计查询请求")
-public class DashboardStatsReqDTO extends BaseReqDTO {
+public class TopDashboardDataReqDTO extends BaseReqDTO {
 
-    /** 设备唯一标识（可选，不传则取第一个在线设备） */
-    @Schema(description = "设备标识（可选）")
-    private String deviceId;
+    /** 用户唯一标识（可选，不传则取第一个在线用户） */
+    @Schema(description = "用户标识（可选）")
+    private String userId;
 }

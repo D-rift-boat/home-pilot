@@ -34,6 +34,18 @@ public interface UserDeviceRelService extends IService<UserDeviceRel> {
     Set<String> getSubscriberUserIds(String deviceId);
 
     /**
+     * 订阅该用户订阅的所有设备ID集合
+     * <p>
+     * 优先从 Redis Set（iot:device:sub:{deviceId}）中读取，
+     * 缓存未命中时回源查询 MySQL 数据库，并将结果回填到 Redis 缓存中。
+     * </p>
+     *
+      * @param userId 用户ID
+      * @return 订阅该用户订阅的所有设备ID集合
+     */
+    List<String> getSubscribedDeviceIds(String userId);
+
+    /**
      * 刷新指定设备的 Redis 订阅者缓存
      * <p>
      * 从数据库查询最新订阅关系，覆盖写入 Redis Set。
