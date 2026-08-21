@@ -146,11 +146,15 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
             map.put(session.getId(), JSONObject.toJSONString(hashMap));
             redisTemplate.opsForHash().putAll(redisKey, map);
             log.debug("WS heartbeat refreshed: sessionId={}, key={}", session.getId(), redisKey);
-        }
-        if("ping".equals(type)){
-            // 收到ping，立刻回复pong
-            String pong = "{\"type\":\"pong\"}";
-            session.sendMessage(new TextMessage(pong));
+            // 心跳包处理
+            if("ping".equals(type)){
+                // 收到ping，立刻回复pong
+                String pong = "{\"type\":\"pong\"}";
+                session.sendMessage(new TextMessage(pong));
+            }
+        } else {
+            // 心跳超时 后收到前端异常发来的消息处理 由后端巡检任务处理 关闭连接
+            log.info("WS heartbeat missing: sessionId={}, key={}", session.getId(), redisKey);
         }
 
     }

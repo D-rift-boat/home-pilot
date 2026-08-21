@@ -479,7 +479,7 @@ public class DeviceStateStore {
         String redisKey = WS_ROUTER_PREFIX + userId;
 
         Long countStr = stringRedisTemplate.opsForHash().size(redisKey);
-        if (ObjectUtils.isNotEmpty(countStr)) {
+        if (ObjectUtils.isEmpty(countStr)) {
             countStr = 0L;
         }
         return countStr;

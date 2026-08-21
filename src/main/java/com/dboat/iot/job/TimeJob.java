@@ -13,6 +13,7 @@ import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ScanOptions;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.springframework.web.socket.CloseStatus;
 
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -44,15 +45,15 @@ public class TimeJob {
 
 
 	/**
-	 * 定时清理本地缓存过期会话（每 30 秒执行一次）
+	 * 定时清理本地缓存过期会话（每 15 秒执行一次）
 	 * <p>
 	 * 遍历内存 Map，检查对应 Redis 路由 Key 是否存活：
 	 * - Key 不存在（已过期）→ 说明前端心跳中断，关闭 Session 并从 Map 移除
 	 * - Key 存在 → 连接正常，跳过
 	 * </p>
 	 */
-	@Scheduled(fixedRate = 30_000, initialDelay = 30_000)
-	public void cleanExpiredSessions() {
+	@Scheduled(fixedRate = 15_000, initialDelay = 15_000)
+	public void cleanLocalExpiredSessions() {
 		Map<String, WsSession> sessionMap = deviceWebSocketHandler.getWsSessionMap();
 		Map<String, String> sessionRedisKeyMap = deviceWebSocketHandler.getWsSessionRedisKeyMap();
 
@@ -61,11 +62,26 @@ public class TimeJob {
 		}
 		sessionMap.forEach((key, session) -> {
 			if (System.currentTimeMillis() - session.getLastHeartbeatTime() > WS_HEARTBEAT_TIMEOUT_MILLIS) {
+				// 1.先尝试close（可能触发onClose，也可能不触发）
+				try {
+					if (session.getWebSocketSession().isOpen()) {
+						session.getWebSocketSession().close(CloseStatus.GOING_AWAY);
+					}
+				} catch (Exception e) {
+					// ps：即使关闭失败，内存也不会泄漏，因为本地 sessionMap 已经删了，session 对象失去引用被 GC 回收
+					log.warn("关闭超时session失败, sessionId={}", session.getWebSocketSession().getId(), e);
+				}
 				// 清除本地超时会话
 				sessionMap.remove(key);
 				sessionRedisKeyMap.remove(session.getWebSocketSession().getId());
-				// 清除 Redis 路由 Key
+				// 清除 Redis 在线会话列表中的该会话
 				//redisTemplate.delete(sessionRedisKeyMap.get(session.getWebSocketSession().getId()));
+				try {
+					//TODO 可以考虑异步执行
+					redisTemplate.opsForHash().delete(key, session.getWebSocketSession().getId());
+				} catch (Exception e) {
+					log.error("Error occurred while deleting session from Redis, key={}, sessionId={}", key, session.getWebSocketSession().getId(), e);
+				}
 				log.debug("Cleaning expired WS session: mapKey={}, sessionId={}", key, session.getWebSocketSession().getId());
 			}
 		});
@@ -73,14 +89,14 @@ public class TimeJob {
 
 
 	/**
-	 * 定时检查并清理过期的 Redis 会话（每 30 秒执行一次）
+	 * 定时检查并清理过期的 Redis 会话（每 65 秒执行一次）
 	 * <p>
 	 * 遍历 Redis 中所有匹配的 Key，检查其中的 Hash 字段：
 	 * - 字段不存在（已过期）→ 说明前端心跳中断，删除该字段
 	 * - 字段存在 → 连接正常，跳过
 	 * </p>
 	 */
-	@Scheduled(fixedRate = 30_000)
+	@Scheduled(fixedRate = 15_000)
 	public void inspectTimeoutRedisSessions() {
 		RLock lock = redissonClient.getLock(INSPECTOR_LOCK_KEY);
 
@@ -100,8 +116,8 @@ public class TimeJob {
 				log.error("Error occurred during Redis session inspection", e);
 			}
 		} catch (InterruptedException e) {
+			log.error("Redis session inspection interrupted", e);
 			Thread.currentThread().interrupt();
-			return;
 		} finally {
 			// 释放锁（必须判断是否当前线程持有，防止误删）
 			if (locked && lock.isHeldByCurrentThread()) {
@@ -127,7 +143,7 @@ public class TimeJob {
 					JSONObject meta = JSONObject.parseObject(entry.getValue().toString());
 					long lastTs = meta.getLongValue("lastHeartbeatTs");
 
-					if (now - lastTs > 60_000) {
+					if (now - lastTs > WS_HEARTBEAT_TIMEOUT_MILLIS) {
 						redisTemplate.opsForHash().delete(key, sessionId);
 						// 未来加副作用放这里，有锁保证只执行一次
 					}
