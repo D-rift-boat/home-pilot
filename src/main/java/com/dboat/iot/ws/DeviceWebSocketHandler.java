@@ -4,7 +4,7 @@ import com.dboat.iot.config.generator.NodeIdProvider;
 import com.dboat.iot.dto.ws.WsUploadDataDTO;
 import com.dboat.iot.enums.WsTypeEnum;
 import com.dboat.iot.service.ws.WsDistributedPushService;
-import com.dboat.iot.utils.WsSessionRoutingService;
+import com.dboat.iot.service.ws.WsSessionRoutingService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.Resource;

@@ -1,6 +1,6 @@
 package com.dboat.iot.config;
 
-import com.dboat.iot.utils.DeviceStateService;
+import com.dboat.iot.service.ws.DeviceStateService;
 import jakarta.annotation.Resource;
 import org.redisson.api.RScript;
 import org.redisson.api.RedissonClient;

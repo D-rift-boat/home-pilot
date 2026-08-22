@@ -1,7 +1,7 @@
 package com.dboat.iot.entity;
 
 import com.baomidou.mybatisplus.annotation.*;
-import com.dboat.iot.utils.DeviceStateService;
+import com.dboat.iot.service.ws.DeviceStateService;
 import lombok.Data;
 
 import java.time.LocalDateTime;

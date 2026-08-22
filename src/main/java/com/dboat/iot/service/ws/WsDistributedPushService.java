@@ -4,7 +4,6 @@ import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
 import com.dboat.iot.config.generator.NodeIdProvider;
 import com.dboat.iot.dto.ws.WsRelayMessageDTO;
-import com.dboat.iot.utils.WsSessionRoutingService;
 import com.dboat.iot.ws.LocalWsSessionManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -14,7 +13,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 
-import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;

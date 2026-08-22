@@ -1,4 +1,4 @@
-package com.dboat.iot.utils;
+package com.dboat.iot.service.ws;
 
 import com.alibaba.fastjson2.JSONObject;
 import com.dboat.iot.dto.ws.IotDevLineDTO;

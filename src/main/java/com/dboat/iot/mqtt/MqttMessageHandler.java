@@ -12,7 +12,7 @@ import com.dboat.iot.service.DeviceService;
 import com.dboat.iot.service.SensorDataService;
 import com.dboat.iot.service.UserDeviceRelService;
 import com.dboat.iot.service.ws.WsDistributedPushService;
-import com.dboat.iot.utils.DeviceStateService;
+import com.dboat.iot.service.ws.DeviceStateService;
 import com.dboat.iot.utils.JsonUtils;
 import org.apache.commons.lang3.ObjectUtils;
 import org.eclipse.paho.client.mqttv3.MqttMessage;

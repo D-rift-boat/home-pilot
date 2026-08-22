@@ -7,7 +7,7 @@ import com.dboat.iot.enums.webhook.WebHookEventTypeEnum;
 import com.dboat.iot.service.DeviceConnectEventService;
 import com.dboat.iot.service.UserDeviceRelService;
 import com.dboat.iot.service.ws.WsDistributedPushService;
-import com.dboat.iot.utils.DeviceStateService;
+import com.dboat.iot.service.ws.DeviceStateService;
 import jakarta.annotation.Resource;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

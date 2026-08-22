@@ -11,7 +11,7 @@ import com.dboat.iot.enums.DeviceOnlineStatusEnum;
 import com.dboat.iot.exception.BusinessException;
 import com.dboat.iot.mapper.DeviceMapper;
 import com.dboat.iot.service.DeviceService;
-import com.dboat.iot.utils.DeviceStateService;
+import com.dboat.iot.service.ws.DeviceStateService;
 import jakarta.annotation.Resource;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
