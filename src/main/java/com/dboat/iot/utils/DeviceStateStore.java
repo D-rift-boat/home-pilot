@@ -334,7 +334,8 @@ public class DeviceStateStore {
             return new WsUploadDataDTO();
         }
         // TODO 暂时只取第一个设备 的最新数据快照
-        Map<Object, Object> map = stringRedisTemplate.opsForHash().entries(buildLatestKey(subscribedDeviceIds.get(0)));
+        String deviceLatestData = getDeviceLatestData(subscribedDeviceIds.get(0));
+        Map<Object, Object> map = JSONObject.parseObject(deviceLatestData, Map.class);
         if (map == null || map.isEmpty()) {
             return new WsUploadDataDTO();
         }
