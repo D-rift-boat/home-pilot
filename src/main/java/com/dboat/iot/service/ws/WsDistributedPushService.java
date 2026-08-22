@@ -9,6 +9,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.ObjectUtils;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
@@ -40,6 +41,7 @@ public class WsDistributedPushService {
     /**
      * 给指定userId的所有WS连接推送消息（分布式集群版）
      */
+    @Async("commonExecutor")
     public void pushToUser(String userId, String msgType, Object payload) {
         // 如果 payload 已经是 JSON 字符串，直接使用；否则序列化
         String payloadJson = (payload instanceof String) ? (String) payload : JSON.toJSONString(payload);
@@ -73,7 +75,9 @@ public class WsDistributedPushService {
         }
     }
 
-    /** 本机直接推送 */
+    /**
+     * 本机直接推送
+     */
     private void pushLocal(String userId, String payloadJson) {
         List<WebSocketSession> sessions = localWsSessionManager.getSessionsByUser(userId);
         for (WebSocketSession session : sessions) {
