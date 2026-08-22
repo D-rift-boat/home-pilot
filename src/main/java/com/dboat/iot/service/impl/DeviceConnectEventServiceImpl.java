@@ -1,15 +1,21 @@
 package com.dboat.iot.service.impl;
 
 import com.dboat.iot.dto.emqx.DeviceConnectDomainEvent;
+import com.dboat.iot.dto.ws.WsUploadDataDTO;
+import com.dboat.iot.enums.WsTypeEnum;
 import com.dboat.iot.enums.webhook.WebHookEventTypeEnum;
 import com.dboat.iot.service.DeviceConnectEventService;
-import com.dboat.iot.utils.DeviceStateStore;
+import com.dboat.iot.service.UserDeviceRelService;
+import com.dboat.iot.service.ws.WsDistributedPushService;
+import com.dboat.iot.utils.DeviceStateService;
 import jakarta.annotation.Resource;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
+
+import java.util.Set;
 
 @Slf4j
 @Service
@@ -19,7 +25,11 @@ public class DeviceConnectEventServiceImpl implements DeviceConnectEventService 
     private final RedisTemplate<String, Object> redisTemplate;
     //private final RedissonClient redissonClient;
     @Resource
-    private final DeviceStateStore deviceStateStore;
+    private final DeviceStateService deviceStateService;
+    @Resource
+    private UserDeviceRelService userDeviceRelService;
+    @Resource
+    private WsDistributedPushService wsPushService;
 
     @Value("${mqtt.webHookSwitch}")
     private String webHookSwitch;
@@ -52,7 +62,22 @@ public class DeviceConnectEventServiceImpl implements DeviceConnectEventService 
      */
     private void handleConnected(DeviceConnectDomainEvent domainEvent) {
         String deviceId = domainEvent.getDeviceId();
-        deviceStateStore.iotDeviceOnline(deviceId);
+        deviceStateService.iotDeviceOnline(deviceId);
+
+        // 构建 WS 事件并推送给订阅用户
+        Set<String> subscriberUserIds = userDeviceRelService.getSubscriberUserIds(deviceId);
+        for (String userId : subscriberUserIds) {
+            long onlineCount = deviceStateService.getUserIotDeviceOnlineCount(userId);
+            WsUploadDataDTO wsUploadDataDTO = new WsUploadDataDTO();
+            wsUploadDataDTO.setType(WsTypeEnum.IOT_DEVICE_ONLINE_COUNT.getCode());
+            WsUploadDataDTO.DataDTO dataDTO = new WsUploadDataDTO.DataDTO();
+            WsUploadDataDTO.DeviceDTO deviceDTO = new WsUploadDataDTO.DeviceDTO();
+            deviceDTO.setDeviceId(deviceId);
+            dataDTO.setIotDeviceOnlineCount(String.valueOf(onlineCount));
+            wsUploadDataDTO.setData(dataDTO);
+            wsUploadDataDTO.setDevice(deviceDTO);
+            wsPushService.pushToUser(userId, WsTypeEnum.IOT_DEVICE_ONLINE_COUNT.getCode(), wsUploadDataDTO);
+        }
     }
 
     /**
@@ -60,7 +85,22 @@ public class DeviceConnectEventServiceImpl implements DeviceConnectEventService 
      */
     private void handleDisconnected(DeviceConnectDomainEvent domainEvent) {
         String deviceId = domainEvent.getDeviceId();
-        deviceStateStore.iotDeviceOffline(deviceId);
+        deviceStateService.iotDeviceOffline(deviceId);
+
+        // 构建 WS 事件并推送给订阅用户
+        Set<String> subscriberUserIds = userDeviceRelService.getSubscriberUserIds(deviceId);
+        for (String userId : subscriberUserIds) {
+            long remainingCount = deviceStateService.getUserIotDeviceOnlineCount(userId);
+            WsUploadDataDTO wsUploadDataDTO = new WsUploadDataDTO();
+            wsUploadDataDTO.setType(WsTypeEnum.IOT_DEVICE_ONLINE_COUNT.getCode());
+            WsUploadDataDTO.DataDTO dataDTO = new WsUploadDataDTO.DataDTO();
+            WsUploadDataDTO.DeviceDTO deviceDTO = new WsUploadDataDTO.DeviceDTO();
+            deviceDTO.setDeviceId(deviceId);
+            dataDTO.setIotDeviceOnlineCount(String.valueOf(remainingCount));
+            wsUploadDataDTO.setData(dataDTO);
+            wsUploadDataDTO.setDevice(deviceDTO);
+            wsPushService.pushToUser(userId, WsTypeEnum.IOT_DEVICE_ONLINE_COUNT.getCode(), wsUploadDataDTO);
+        }
     }
 
 

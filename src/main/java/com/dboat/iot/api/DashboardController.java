@@ -7,17 +7,16 @@ import com.dboat.iot.dto.response.Result;
 import com.dboat.iot.dto.ws.WsUploadDataDTO;
 import com.dboat.iot.entity.Device;
 import com.dboat.iot.service.DeviceService;
-import com.dboat.iot.utils.DeviceStateStore;
+import com.dboat.iot.utils.DeviceStateService;
+import com.dboat.iot.utils.WsSessionRoutingService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
-import jakarta.annotation.Resource;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -43,14 +42,19 @@ public class DashboardController {
     /** 设备服务（获取设备信息） */
     private final DeviceService deviceService;
 
-    /** Redis 设备状态存储（获取实时数据 + 在线设备） */
-    private final DeviceStateStore deviceStateStore;
+    /** Redis 设备状态服务（获取实时数据 + 在线设备） */
+    private final DeviceStateService deviceStateService;
+
+    /** WS 会话路由存储（获取用户在线会话数） */
+    private final WsSessionRoutingService wsSessionRoutingService;
 
     /** 构造器注入依赖 */
     public DashboardController(DeviceService deviceService,
-                                DeviceStateStore deviceStateStore) {
+                                DeviceStateService deviceStateService,
+                                WsSessionRoutingService wsSessionRoutingService) {
         this.deviceService = deviceService;
-        this.deviceStateStore = deviceStateStore;
+        this.deviceStateService = deviceStateService;
+        this.wsSessionRoutingService = wsSessionRoutingService;
     }
 
     /**
@@ -66,11 +70,11 @@ public class DashboardController {
 
         // 1. 从 Redis 获取用户在线设备数
         String userId = request.getUserId();
-        Long userDeviceOnlineCount = deviceStateStore.getUserDeviceOnlineCount(userId);
-        Long iotDeviceOnlineCount = deviceStateStore.getUserIotDeviceOnlineCount(userId);
+        Long userDeviceOnlineCount = wsSessionRoutingService.getUserSessionCount(userId);
+        Long iotDeviceOnlineCount = deviceStateService.getUserIotDeviceOnlineCount(userId);
 
         // 2. 确定要查询的设备ID
-        //Set<String> onlineIds = deviceStateStore.getOnlineDeviceIds(userId);
+        //Set<String> onlineIds = deviceStateService.getOnlineDeviceIds(userId);
         //if (userId == null || userId.isEmpty()) {
         //    // 未指定设备，取第一个在线设备
 		//	//if (!onlineIds.isEmpty()) {
@@ -81,7 +85,7 @@ public class DashboardController {
         //int iotDeviceOnlineCount = onlineIds.size();
 
         // 3. 从 Redis 获取设备最新快照数据（MQTT 上报时写入）
-        WsUploadDataDTO latestData = deviceStateStore.getIotDeviceLatestDataByUserId(userId);
+        WsUploadDataDTO latestData = deviceStateService.getIotDeviceLatestDataByUserId(userId);
         latestData.getData().setIotDeviceOnlineCount(String.valueOf(iotDeviceOnlineCount));
         latestData.getData().setUserDeviceOnlineCount(String.valueOf(userDeviceOnlineCount));
 
@@ -101,7 +105,7 @@ public class DashboardController {
         List<OnlineDeviceRespDTO> result = new ArrayList<>();
 
         // 1. 从 Redis 获取所有在线设备ID
-        Set<String> onlineIds = deviceStateStore.getOnlineDeviceIds("admin");
+        Set<String> onlineIds = deviceStateService.getOnlineDeviceIds("admin");
         if (onlineIds.isEmpty()) {
             return Result.ok(result);
         }
@@ -119,7 +123,7 @@ public class DashboardController {
             }
 
             // 从 Redis 获取设备最新快照数据（MQTT 上报时写入）
-            JSONObject latestData = deviceStateStore.getIotDeviceLatestDataByDeviceId(deviceId);
+            JSONObject latestData = deviceStateService.getIotDeviceLatestDataByDeviceId(deviceId);
             if (latestData != null) {
                 dto.setTemperatureAht(toBigDecimal(latestData.get("tempAht")));
                 dto.setHumidity(toBigDecimal(latestData.get("humidity")));

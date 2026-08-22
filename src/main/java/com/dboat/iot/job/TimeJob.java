@@ -2,7 +2,12 @@ package com.dboat.iot.job;
 
 import com.alibaba.fastjson2.JSONObject;
 import com.dboat.iot.dto.ws.IotDevLineDTO;
-import com.dboat.iot.utils.DeviceStateStore;
+import com.dboat.iot.dto.ws.WsUploadDataDTO;
+import com.dboat.iot.enums.WsTypeEnum;
+import com.dboat.iot.service.UserDeviceRelService;
+import com.dboat.iot.service.ws.WsDistributedPushService;
+import com.dboat.iot.utils.DeviceStateService;
+import com.dboat.iot.utils.WsSessionRoutingService;
 import com.dboat.iot.ws.LocalWsSessionManager;
 import com.dboat.iot.ws.WsSession;
 import jakarta.annotation.Resource;
@@ -18,6 +23,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
 
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 import static com.dboat.iot.common.constants.MqttConstants.IOT_DEVICE_OFFLINE_TIMEOUT_MS;
@@ -44,7 +50,19 @@ public class TimeJob {
 	private LocalWsSessionManager localWsSessionManager;
 
 	@Resource
-	private DeviceStateStore deviceStateStore;
+	private DeviceStateService deviceStateService;
+
+	/** WS 会话路由存储，管理 Redis 路由表操作 */
+	@Resource
+	private WsSessionRoutingService wsSessionRoutingService;
+
+	/** WS 分布式推送服务，用户级精准推送 */
+	@Resource
+	private WsDistributedPushService wsPushService;
+
+	/** 用户-设备关系服务，用于查询设备订阅者列表 */
+	@Resource
+	private UserDeviceRelService userDeviceRelService;
 
 	/**
 	 * 定时清理过期iot设备在线列表
@@ -81,13 +99,13 @@ public class TimeJob {
 				// 通过 LocalWsSessionManager 移除本地超时会话 + redisKey 映射
 				String redisKey = localWsSessionManager.getRedisKey(sessionId);
 				localWsSessionManager.removeSession(sessionId);
-				// 清除 Redis 在线会话列表中的该会话
-				if (redisKey != null) {
+				// 通过 WsSessionRoutingService 清除 Redis 路由表中的该会话
+				String userId = wsSession.getUserId();
+				if (userId != null) {
 					try {
-						//TODO 可以考虑异步执行
-						redisTemplate.opsForHash().delete(redisKey, sessionId);
+						wsSessionRoutingService.removeSession(userId, sessionId);
 					} catch (Exception e) {
-						log.error("Error occurred while deleting session from Redis, key={}, sessionId={}", redisKey, sessionId, e);
+						log.error("Error occurred while deleting session from Redis routing store, userId={}, sessionId={}", userId, sessionId, e);
 					}
 				}
 				log.debug("Cleaning expired WS session: sessionId={}", sessionId);
@@ -236,11 +254,23 @@ public class TimeJob {
 
 					// 核心判定：now - lastReportTs > 60s → 业务离线
 					if (now - lastReportTs > IOT_DEVICE_OFFLINE_TIMEOUT_MS) {
-						// 1. 从 Redis Hash 中移除该离线设备
-						redisTemplate.opsForHash().delete(key, deviceId);
+						// 1. 更新 Redis 在线列表（纯 Redis 操作，返回剩余在线数）
+						deviceStateService.iotDeviceOffline(deviceId);
 
-						// 2. WS 推送离线事件 + 记录离线日志 + 更新在线计数
-						deviceStateStore.iotDeviceOffline(deviceId);
+						// 2. 构建 WS 事件并推送给订阅用户
+						Set<String> subscriberUserIds = userDeviceRelService.getSubscriberUserIds(deviceId);
+						for (String userId : subscriberUserIds) {
+							long remainingCount = deviceStateService.getUserIotDeviceOnlineCount(userId);
+							WsUploadDataDTO wsUploadDataDTO = new WsUploadDataDTO();
+							wsUploadDataDTO.setType(WsTypeEnum.IOT_DEVICE_ONLINE_COUNT.getCode());
+							WsUploadDataDTO.DataDTO dataDTO = new WsUploadDataDTO.DataDTO();
+							WsUploadDataDTO.DeviceDTO deviceDTO = new WsUploadDataDTO.DeviceDTO();
+							deviceDTO.setDeviceId(deviceId);
+							dataDTO.setIotDeviceOnlineCount(String.valueOf(remainingCount));
+							wsUploadDataDTO.setData(dataDTO);
+							wsUploadDataDTO.setDevice(deviceDTO);
+							wsPushService.pushToUser(userId, WsTypeEnum.IOT_DEVICE_ONLINE_COUNT.getCode(), wsUploadDataDTO);
+						}
 
 						offlineCount++;
 						log.info("IoT device offline detected by inspection: deviceId={}, lastReportTs={}, idle={}ms",

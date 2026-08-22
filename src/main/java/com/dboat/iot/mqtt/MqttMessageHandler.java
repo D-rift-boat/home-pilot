@@ -4,6 +4,7 @@ import com.alibaba.fastjson2.JSONObject;
 import com.dboat.iot.common.constants.MqttConstants;
 import com.dboat.iot.dto.mqtt.*;
 import com.dboat.iot.dto.ws.WsUploadDataDTO;
+import com.dboat.iot.enums.WsTypeEnum;
 import com.dboat.iot.entity.SensorData;
 import com.dboat.iot.enums.SensorStatusEnum;
 import com.dboat.iot.service.DeviceLogService;
@@ -11,7 +12,7 @@ import com.dboat.iot.service.DeviceService;
 import com.dboat.iot.service.SensorDataService;
 import com.dboat.iot.service.UserDeviceRelService;
 import com.dboat.iot.service.ws.WsDistributedPushService;
-import com.dboat.iot.utils.DeviceStateStore;
+import com.dboat.iot.utils.DeviceStateService;
 import com.dboat.iot.utils.JsonUtils;
 import org.apache.commons.lang3.ObjectUtils;
 import org.eclipse.paho.client.mqttv3.MqttMessage;
@@ -29,8 +30,6 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-
-import static com.dboat.iot.common.constants.MqttConstants.IOT_DEVICE_ONLINE_PREFIX;
 
 /**
  * MQTT 消息处理器
@@ -83,8 +82,8 @@ public class MqttMessageHandler {
     private final SensorDataService sensorDataService;
     /** 设备日志服务，用于记录设备上下线、异常等事件 */
     private final DeviceLogService deviceLogService;
-    /** Redis 设备状态存储工具，用于刷新设备实时状态 */
-    private final DeviceStateStore deviceStateStore;
+    /** Redis 设备状态服务，用于刷新设备实时状态 */
+    private final DeviceStateService deviceStateService;
     /** WS分布式推送服务，用户级精准推送 */
     private final WsDistributedPushService wsPushService;
     /** 用户-设备关系服务，用于查询设备订阅者列表 */
@@ -99,7 +98,7 @@ public class MqttMessageHandler {
      * @param deviceService        设备资产服务
      * @param sensorDataService    传感器数据服务
      * @param deviceLogService     设备日志服务
-     * @param deviceStateStore       Redis 状态存储工具
+     * @param deviceStateService     Redis 状态服务
      * @param wsPushService          WS分布式推送服务（用户级精准推送）
      * @param userDeviceRelService   用户-设备关系服务（查询订阅者）
      */
@@ -107,14 +106,14 @@ public class MqttMessageHandler {
                                DeviceService deviceService,
                                SensorDataService sensorDataService,
                                DeviceLogService deviceLogService,
-                               DeviceStateStore deviceStateStore,
+                               DeviceStateService deviceStateService,
                                WsDistributedPushService wsPushService,
                                UserDeviceRelService userDeviceRelService) {
         this.mqttClientManager = mqttClientManager;
         this.deviceService = deviceService;
         this.sensorDataService = sensorDataService;
         this.deviceLogService = deviceLogService;
-        this.deviceStateStore = deviceStateStore;
+        this.deviceStateService = deviceStateService;
         this.wsPushService = wsPushService;
         this.userDeviceRelService = userDeviceRelService;
     }
@@ -199,7 +198,7 @@ public class MqttMessageHandler {
         }
 
         // 校验消息是否是最新消息  查实时数据快照时间戳进行时间比对
-        JSONObject latestData = deviceStateStore.getIotDeviceLatestDataByDeviceId(deviceId);
+        JSONObject latestData = deviceStateService.getIotDeviceLatestDataByDeviceId(deviceId);
         if (ObjectUtils.isNotEmpty(latestData) && header.getTimestamp() < latestData.getLong("timestamp")) {
             log.warn("Outdated sensor data, ignore: {}", header.getTraceId());
             return;
@@ -227,7 +226,7 @@ public class MqttMessageHandler {
         // ========== 刷新 Redis 设备快照 、维护用户在线iot设备列表、维护在线iot设备数 ==========
         // 构建完整设备数据 JSON（存入 {userId}:{deviceId}:latest，TTL 24h）
         Map deviceDataMap = buildDeviceLatestMap(deviceId, deviceStatus, aht20Status, bmp280Status, payload, header.getTimestamp());
-        deviceStateStore.updateDeviceLatestData(deviceId, deviceDataMap);
+        deviceStateService.updateDeviceLatestData(deviceId, deviceDataMap);
 
         // ========== WebSocket 用户级实时推送 ==========
         try {
@@ -303,9 +302,23 @@ public class MqttMessageHandler {
         // 3. 异步记录设备离线日志
         deviceLogService.logDeviceOnline(deviceId, offlineContext);
 
-        // 新增/刷新 用户在线iot设备列表 并ws通知订阅设备的相关用户
-        deviceStateStore.iotDeviceOnline(deviceId);
+        // 新增/刷新 用户在线iot设备列表（纯 Redis 操作）
+        deviceStateService.iotDeviceOnline(deviceId);
 
+        // 构建 WS 事件并推送给订阅用户
+        Set<String> subscriberUserIds = userDeviceRelService.getSubscriberUserIds(deviceId);
+        for (String userId : subscriberUserIds) {
+            long onlineCount = deviceStateService.getUserIotDeviceOnlineCount(userId);
+            WsUploadDataDTO wsUploadDataDTO = new WsUploadDataDTO();
+            wsUploadDataDTO.setType(WsTypeEnum.IOT_DEVICE_ONLINE_COUNT.getCode());
+            WsUploadDataDTO.DataDTO dataDTO = new WsUploadDataDTO.DataDTO();
+            WsUploadDataDTO.DeviceDTO deviceDTO = new WsUploadDataDTO.DeviceDTO();
+            deviceDTO.setDeviceId(deviceId);
+            dataDTO.setIotDeviceOnlineCount(String.valueOf(onlineCount));
+            wsUploadDataDTO.setData(dataDTO);
+            wsUploadDataDTO.setDevice(deviceDTO);
+            wsPushService.pushToUser(userId, WsTypeEnum.IOT_DEVICE_ONLINE_COUNT.getCode(), wsUploadDataDTO);
+        }
     }
 
     /**
@@ -324,10 +337,25 @@ public class MqttMessageHandler {
         String deviceId = message.getHeader().getDeviceId();
         log.warn("Device disconnected event received for device: {}", deviceId);
 
-        // 1. 更新用户在线iot设备列表 + ws 推送iot设备数量 并ws通知订阅设备的相关用户
-        deviceStateStore.iotDeviceOffline(deviceId);
+        // 1. 更新用户在线iot设备列表（纯 Redis 操作）
+        deviceStateService.iotDeviceOffline(deviceId);
 
-        // 2. 从 InfluxDB 查询离线前最后一条传感器数据作为离线上下文
+        // 2. 构建 WS 事件并推送给订阅用户
+        Set<String> subscriberUserIds = userDeviceRelService.getSubscriberUserIds(deviceId);
+        for (String userId : subscriberUserIds) {
+            long remainingCount = deviceStateService.getUserIotDeviceOnlineCount(userId);
+            WsUploadDataDTO wsUploadDataDTO = new WsUploadDataDTO();
+            wsUploadDataDTO.setType(WsTypeEnum.IOT_DEVICE_ONLINE_COUNT.getCode());
+            WsUploadDataDTO.DataDTO dataDTO = new WsUploadDataDTO.DataDTO();
+            WsUploadDataDTO.DeviceDTO deviceDTO = new WsUploadDataDTO.DeviceDTO();
+            deviceDTO.setDeviceId(deviceId);
+            dataDTO.setIotDeviceOnlineCount(String.valueOf(remainingCount));
+            wsUploadDataDTO.setData(dataDTO);
+            wsUploadDataDTO.setDevice(deviceDTO);
+            wsPushService.pushToUser(userId, WsTypeEnum.IOT_DEVICE_ONLINE_COUNT.getCode(), wsUploadDataDTO);
+        }
+
+        // 3. 从 InfluxDB 查询离线前最后一条传感器数据作为离线上下文
         String offlineContext = buildOfflineContext(deviceId);
 
         // 3. 异步记录设备离线日志
@@ -482,7 +510,7 @@ public class MqttMessageHandler {
 
         // data 部分：跨页面共享的实时汇总数据
         JSONObject data = new JSONObject();
-        //long onlineCount = deviceStateStore.getUserIotDeviceOnlineCount();
+        //long onlineCount = deviceStateService.getUserIotDeviceOnlineCount();
         MqttUpEnvData env = payload.getEnvData();
         if (env != null) {
             data.put("tempAht", env.getTempAht());

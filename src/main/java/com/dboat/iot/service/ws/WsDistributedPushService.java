@@ -4,7 +4,7 @@ import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
 import com.dboat.iot.config.generator.NodeIdProvider;
 import com.dboat.iot.dto.ws.WsRelayMessageDTO;
-import com.dboat.iot.utils.DeviceStateStore;
+import com.dboat.iot.utils.WsSessionRoutingService;
 import com.dboat.iot.ws.LocalWsSessionManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -37,7 +37,7 @@ public class WsDistributedPushService {
     private final NodeIdProvider nodeIdProvider;
     //private final WsUserNodeMappingService userNodeMappingService;
     private final LocalWsSessionManager localWsSessionManager;
-    private final DeviceStateStore deviceStateStore;
+    private final WsSessionRoutingService wsSessionRoutingService;
 
     /**
      * 给指定userId的所有WS连接推送消息（分布式集群版）
@@ -47,7 +47,7 @@ public class WsDistributedPushService {
         String payloadJson = (payload instanceof String) ? (String) payload : JSON.toJSONString(payload);
 
         // 1.查询该用户在哪些节点有WS连接（从WS路由表获取）
-        Map<String, JSONObject> sessionNodeMap = deviceStateStore.getUserSessionNodeMap(userId);
+        Map<String, JSONObject> sessionNodeMap = wsSessionRoutingService.getUserSessionNodeMap(userId);
         if (ObjectUtils.isEmpty(sessionNodeMap)) {
             log.debug("user {} has no online ws connections", userId);
             return;

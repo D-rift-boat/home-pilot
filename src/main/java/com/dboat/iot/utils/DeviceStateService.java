@@ -3,8 +3,7 @@ package com.dboat.iot.utils;
 import com.alibaba.fastjson2.JSONObject;
 import com.dboat.iot.dto.ws.IotDevLineDTO;
 import com.dboat.iot.dto.ws.WsUploadDataDTO;
-import com.dboat.iot.enums.WsTypeEnum;
-import com.dboat.iot.service.ws.WsDistributedPushService;
+import com.dboat.iot.service.UserDeviceRelService;
 import jakarta.annotation.Resource;
 import org.apache.commons.lang3.ObjectUtils;
 import org.redisson.api.RScript;
@@ -12,21 +11,20 @@ import org.redisson.api.RedissonClient;
 import org.redisson.client.codec.StringCodec;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Component;
 
-import com.dboat.iot.service.UserDeviceRelService;
-import org.springframework.context.annotation.Lazy;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 import static com.dboat.iot.common.constants.MqttConstants.IOT_DEVICE_ONLINE_PREFIX;
-import static com.dboat.iot.common.constants.WebSocketConstants.WS_ROUTER_PREFIX;
+import static com.dboat.iot.common.constants.RedisConstants.*;
 
 /**
- * 设备实时状态存储（Redis State Store）—— 按设计文档新 Key 规范重构
+ * 设备实时状态服务（Redis State Service）—— 按设计文档新 Key 规范重构
  * <p>
  * Redis Key 设计：
  * <ul>
@@ -45,49 +43,9 @@ import static com.dboat.iot.common.constants.WebSocketConstants.WS_ROUTER_PREFIX
  * @author dboat
  */
 @Component
-public class DeviceStateStore {
+public class DeviceStateService {
 
-    private static final Logger log = LoggerFactory.getLogger(DeviceStateStore.class);
-
-    /** Redisson Lua 脚本执行时使用的 String Codec 全限定类名 */
-    private static final String STRING_CODEC_NAME = "org.redisson.client.codec.StringCodec";
-
-    /**
-     * 默认用户ID（前端写死 admin）
-     */
-    private static final String DEFAULT_USER_ID = "admin";
-
-    /**
-     * 设备最新数据 Key 前缀
-     */
-    private static final String LATEST_PREFIX = "ws:iot_device:latest:";
-
-    /**
-     * 用户在线iot设备列表 前缀
-     */
-    private static final String ONLINE_IOT_DEVICE_LIST_PREFIX = "ws:iot_device:online_list:";
-
-    /**
-     * 用户在线设备总数 Key
-     */
-    private static final String USER_ONLINE_COUNT_PREFIX = "ws:stat:online_user_device_count:";
-
-    /**
-     * 在线iot设备总数 Key
-     */
-    private static final String IOT_ONLINE_COUNT_PREFIX = "ws:stat:online_iot_device_count:";
-
-    /**
-     * 设备最新数据 TTL：24小时（长时间无上报自动过期，判定设备离线）
-     */
-    private static final long LATEST_DATA_TTL_HOURS = 24;
-
-    /**
-     * WS分布式推送服务，用户级精准推送
-     */
-    @Resource
-    private WsDistributedPushService wsPushService;
-
+    private static final Logger log = LoggerFactory.getLogger(DeviceStateService.class);
 
     /**
      * Redis 模板，用于操作 Redis
@@ -115,60 +73,19 @@ public class DeviceStateStore {
     private RScript scriptExecutor;
 
     /**
-     * Lua 脚本：仅当值为正数时递减
-     */
-    private static final String DECR_IF_POSITIVE_LUA =
-            "local val = tonumber(redis.call('get', KEYS[1])) " +
-                    "if val and val > 0 then " +
-                    "    return redis.call('decr', KEYS[1]) " +
-                    "end " +
-                    "return 0";
-
-    /**
-     * Lua 脚本：iot设备上线
-     */
-    private static final String LUA_IOT_ONLINE = """
-        redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
-            redis.call('EXPIRE', KEYS[1], 86400)
-        return redis.call('HLEN', KEYS[1])
-        """;
-
-    /**
-     * Lua 脚本：原子化 Hash 批量写入 + 设置整体过期时间
-     * <p>
-     * ARGV 约定：ARGV[1] = TTL秒数，ARGV[2..N] = field-value 对
-     * 分离 TTL 参数，避免 unpack 展开时混入 HSET 导致参数个数为奇数。
-     * </p>
-     */
-    private static final String HASH_PUT_ALL_WITH_EXPIRE_LUA = """
-            redis.call('HSET', KEYS[1], unpack(ARGV, 2, #ARGV))
-            redis.call('EXPIRE', KEYS[1], tonumber(ARGV[1]))
-            return 1
-            """;
-
-    /**
-     * Lua 脚本：仅当值为正数时递减
-     */
-    private static final String LUA_IOT_OFFLINE = """
-            redis.call('HDEL', KEYS[1], ARGV[1])
-            return redis.call('HLEN', KEYS[1])
-            """;
-
-    /**
-     * Lua 脚本：仅当值为正数时递减
+     * Lua 脚本：仅当值为正数时递减（防止计数器减到负数）
      */
     private final DefaultRedisScript<Long> decrScript =
-            new DefaultRedisScript<>(DECR_IF_POSITIVE_LUA, Long.class);
-
+            new DefaultRedisScript<>(LUA_DECR_IF_POSITIVE, Long.class);
 
 
     // ==================== Key 构建 ====================
 
     /**
-     * 构建设备最新数据 Key（使用默认 ws:iotDevice:latest:iot_deviceId
+     * 构建设备最新数据 Key：ws:iot_device:latest:{deviceId}
      */
     private String buildLatestKey(String deviceId) {
-        return LATEST_PREFIX + deviceId;
+        return DEVICE_LATEST_PREFIX + deviceId;
     }
 
     /**
@@ -179,7 +96,7 @@ public class DeviceStateStore {
     }
 
     /**
-     * 构建用户在线iot设备总数 Key：ws:stat:online_iot_device_count::{userId}
+     * 构建用户在线 IoT 设备总数 Key：ws:stat:online_iot_device_count:{userId}
      */
     private String buildIotOnlineCountKey(String userId) {
         return IOT_ONLINE_COUNT_PREFIX + userId;
@@ -201,7 +118,7 @@ public class DeviceStateStore {
     public boolean updateDeviceLatestData(String deviceId, Map deviceDataMap) {
         // 更新设备最新数据快照
         String key = buildLatestKey(deviceId);
-        stringRedisTemplate.opsForValue().set(key, JSONObject.toJSONString(deviceDataMap), LATEST_DATA_TTL_HOURS, TimeUnit.HOURS);
+        stringRedisTemplate.opsForValue().set(key, JSONObject.toJSONString(deviceDataMap), DEVICE_LATEST_DATA_TTL_HOURS, TimeUnit.HOURS);
 
         // iot设备心跳处理
         // 获取所有订阅该设备的用户列表
@@ -219,14 +136,11 @@ public class DeviceStateStore {
 
             String iotOnlineKey = IOT_DEVICE_ONLINE_PREFIX + userId;
             // 原子化：批量写入 + 设置整key过期
-            atomicHashPutAll(iotOnlineKey, iotOnlineMap, LATEST_DATA_TTL_HOURS, TimeUnit.HOURS);
+            atomicHashPutAll(iotOnlineKey, iotOnlineMap, DEVICE_LATEST_DATA_TTL_HOURS, TimeUnit.HOURS);
         }
-
 
         log.debug("Refreshed device latest data: {}", deviceId);
         return true;
-
-
     }
 
     /**
@@ -258,7 +172,7 @@ public class DeviceStateStore {
 
         Object res = scriptExecutor.eval(
                 RScript.Mode.READ_WRITE,
-                HASH_PUT_ALL_WITH_EXPIRE_LUA,
+                LUA_HASH_PUT_ALL_WITH_EXPIRE,
                 RScript.ReturnType.INTEGER,
                 Collections.singletonList(redisKey),
                 argv.toArray()
@@ -313,7 +227,6 @@ public class DeviceStateStore {
             }
         }
         return new JSONObject();
-
     }
 
     /**
@@ -326,7 +239,7 @@ public class DeviceStateStore {
     public WsUploadDataDTO getIotDeviceLatestDataByUserId(String userId) {
         // 获取用户订阅设备列表
         List<String> subscribedDeviceIds = userDeviceRelService.getSubscribedDeviceIds(userId);
-        if(ObjectUtils.isEmpty(subscribedDeviceIds)){
+        if (ObjectUtils.isEmpty(subscribedDeviceIds)) {
             return new WsUploadDataDTO();
         }
         // TODO 暂时只取第一个设备 的最新数据快照
@@ -357,7 +270,6 @@ public class DeviceStateStore {
         WsUploadDataDTO wsUploadDataDTO = WsUploadDataDTO.of(dataDTO, deviceDTO);
         wsUploadDataDTO.setTimestamp(getStr(map, "timestamp"));
         return wsUploadDataDTO;
-
     }
 
     /**
@@ -390,60 +302,42 @@ public class DeviceStateStore {
     }
 
     /**
-     * 设备离线：删除最新数据 Key + DECR 在线数
-     * 在线设备数量 -1
+     * IoT 设备离线：从所有订阅用户的在线列表中移除该设备
+     * <p>
+     * 纯 Redis 操作，不涉及 WS 事件推送（由调用方负责构建事件并推送）。
+     * </p>
      *
-     * @return true=成功删除（设备确实离线），false=Key 已不存在
+     * @param iotDeviceId 离线设备ID
+     * @return 最后一个订阅用户更新后的剩余在线设备数（无订阅用户时返回 0）
      */
-    public boolean iotDeviceOffline(String iotDeviceId) {
-        // 获取所有订阅该设备的用户列表
+    public long iotDeviceOffline(String iotDeviceId) {
         Set<String> userIdSet = userDeviceRelService.getSubscriberUserIds(iotDeviceId);
-        // 更新所属用户的在线iot设备列表 删除该设备
+        long lastCount = 0;
         for (String userId : userIdSet) {
-            Long userIotDevOnlineCount = offlineUserIotDev(userId, iotDeviceId);
-            WsUploadDataDTO wsUploadDataDTO = new WsUploadDataDTO();
-            wsUploadDataDTO.setType(WsTypeEnum.IOT_DEVICE_ONLINE_COUNT.getCode());
-            WsUploadDataDTO.DataDTO dataDTO = new WsUploadDataDTO.DataDTO();
-            WsUploadDataDTO.DeviceDTO deviceDTO = new WsUploadDataDTO.DeviceDTO();
-            deviceDTO.setDeviceId(iotDeviceId);
-            dataDTO.setIotDeviceOnlineCount(String.valueOf(userIotDevOnlineCount));
-            wsUploadDataDTO.setData((dataDTO));
-            wsUploadDataDTO.setDevice(deviceDTO);
-            // 用户级推送：通知该订阅用户在线IoT设备数量变更
-            wsPushService.pushToUser(userId, WsTypeEnum.IOT_DEVICE_ONLINE_COUNT.getCode(), wsUploadDataDTO);
-            log.info("Device offline", userId);
+            lastCount = offlineUserIotDev(userId, iotDeviceId);
+            log.info("IoT device offline, userId={}, remainingCount={}", userId, lastCount);
         }
-
-        return true;
+        return lastCount;
     }
 
     /**
-     * iot设备上线：
-     * 新增/刷新 用户在线iot设备列表 并ws通知订阅设备的相关用户
+     * IoT 设备上线：将设备加入所有订阅用户的在线列表
+     * <p>
+     * 纯 Redis 操作，不涉及 WS 事件推送（由调用方负责构建事件并推送）。
+     * </p>
      *
-     * @return 在线设备数量
+     * @param iotDeviceId 上线设备ID
+     * @return 最后一个订阅用户更新后的在线设备数（无订阅用户时返回 0）
      */
-    public boolean iotDeviceOnline(String iotDeviceId) {
+    public long iotDeviceOnline(String iotDeviceId) {
         Set<String> userIdSet = userDeviceRelService.getSubscriberUserIds(iotDeviceId);
         log.info("Device subscribe user list：{}", userIdSet);
-
-        // 更新所属用户的在线iot设备列表 该设备加入在线列表
+        long lastCount = 0;
         for (String userId : userIdSet) {
-            Long userIotDevOnlineCount = onlineUserIotDev(userId, iotDeviceId);
-            WsUploadDataDTO wsUploadDataDTO = new WsUploadDataDTO();
-            wsUploadDataDTO.setType(WsTypeEnum.IOT_DEVICE_ONLINE_COUNT.getCode());
-            WsUploadDataDTO.DataDTO dataDTO = new WsUploadDataDTO.DataDTO();
-            WsUploadDataDTO.DeviceDTO deviceDTO = new WsUploadDataDTO.DeviceDTO();
-            deviceDTO.setDeviceId(iotDeviceId);
-            dataDTO.setIotDeviceOnlineCount(String.valueOf(userIotDevOnlineCount));
-            wsUploadDataDTO.setData((dataDTO));
-            wsUploadDataDTO.setDevice(deviceDTO);
-            // 用户级推送：通知该订阅用户在线IoT设备数量变更
-            wsPushService.pushToUser(userId, WsTypeEnum.IOT_DEVICE_ONLINE_COUNT.getCode(), wsUploadDataDTO);
-            log.info("Device online iotDeviceId：{}", iotDeviceId);
+            lastCount = onlineUserIotDev(userId, iotDeviceId);
+            log.info("IoT device online, userId={}, onlineCount={}", userId, lastCount);
         }
-
-        return true;
+        return lastCount;
     }
 
     /**
@@ -480,7 +374,7 @@ public class DeviceStateStore {
     /**
      * 删除用户在线设备列表中的指定设备
      */
-    public Long offlineUserIotDev(String userId,String iotDeviceId) {
+    public Long offlineUserIotDev(String userId, String iotDeviceId) {
         String redisKey = IOT_DEVICE_ONLINE_PREFIX + userId;
         IotDevLineDTO iotDevLineDTO = IotDevLineDTO.builder()
                 .deviceId(iotDeviceId)
@@ -506,7 +400,7 @@ public class DeviceStateStore {
     /**
      * 新增/更新用户在线设备列表中的指定设备（原子操作）
      */
-    public Long onlineUserIotDev(String userId,String iotDeviceId) {
+    public Long onlineUserIotDev(String userId, String iotDeviceId) {
         String redisKey = IOT_DEVICE_ONLINE_PREFIX + userId;
         IotDevLineDTO iotDevLineDTO = IotDevLineDTO.builder()
                 .deviceId(iotDeviceId)
@@ -558,21 +452,6 @@ public class DeviceStateStore {
     }
 
     /**
-     * 获取用户在线设备总数
-     *
-     * @return 在线设备数，Key 不存在时返回 0
-     */
-    public Long getUserDeviceOnlineCount(String userId) {
-        String redisKey = WS_ROUTER_PREFIX + userId;
-
-        Long countStr = stringRedisTemplate.opsForHash().size(redisKey);
-        if (ObjectUtils.isEmpty(countStr)) {
-            countStr = 0L;
-        }
-        return countStr;
-    }
-
-    /**
      * 获取用户在线IoT设备列表
      * <p>
      * 查询 iot:device:online:{userId} Hash，返回 deviceId → IotDevLineDTO JSON 映射。
@@ -582,29 +461,6 @@ public class DeviceStateStore {
      */
     public Map<String, JSONObject> getUserDeviceOnlineMapList(String userId) {
         String redisKey = IOT_DEVICE_ONLINE_PREFIX + userId;
-
-        Map<String, JSONObject> entries = stringRedisTemplate.opsForHash().entries(redisKey).entrySet().stream()
-                .collect(Collectors.toMap(
-                        entry -> entry.getKey().toString(),
-                        entry -> JSONObject.parseObject(entry.getValue().toString())
-                ));
-        if (ObjectUtils.isEmpty(entries)) {
-            entries = Collections.emptyMap();
-        }
-        return entries;
-    }
-
-    /**
-     * 获取用户WS会话的节点路由映射
-     * <p>
-     * 查询 ws:session:{userId} Hash，返回 sessionId → {nodeId, lastHeartbeatTs} 映射。
-     * 用于分布式推送时确定用户在哪些节点有活跃WS连接。
-     * </p>
-     *
-     * @return 会话节点映射，Key 不存在时返回空 Map
-     */
-    public Map<String, JSONObject> getUserSessionNodeMap(String userId) {
-        String redisKey = WS_ROUTER_PREFIX + userId;
 
         Map<String, JSONObject> entries = stringRedisTemplate.opsForHash().entries(redisKey).entrySet().stream()
                 .collect(Collectors.toMap(
@@ -637,21 +493,4 @@ public class DeviceStateStore {
         }
         return members;
     }
-
-    /**
-     * 从 Redis Key 中提取 deviceId
-     * <p>
-     * Key 格式：admin:{deviceId}:latest → 提取中间部分
-     * </p>
-     *
-     * @param key Redis Key
-     * @return deviceId，格式不匹配时返回 null
-     */
-    //private String extractDeviceIdFromKey(String key) {
-    //    String prefix = DEFAULT_USER_ID + ":";
-    //    if (!key.startsWith(prefix) || !key.endsWith(LATEST_SUFFIX)) {
-    //        return null;
-    //    }
-    //    return key.substring(prefix.length(), key.length() - LATEST_SUFFIX.length());
-    //}
 }

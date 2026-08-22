@@ -4,6 +4,7 @@ import com.alibaba.fastjson2.JSONObject;
 import com.dboat.iot.dto.ws.WsUploadDataDTO;
 import com.dboat.iot.enums.WsTypeEnum;
 import com.dboat.iot.service.ws.WsDistributedPushService;
+import com.dboat.iot.utils.WsSessionRoutingService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.Resource;
@@ -57,6 +58,10 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
     @Resource
     private WsDistributedPushService wsPushService;
 
+    /** WS 会话路由存储，管理 Redis 路由表操作 */
+    @Resource
+    private WsSessionRoutingService wsSessionRoutingService;
+
     public DeviceWebSocketHandler(StringRedisTemplate redisTemplate) {
         this.redisTemplate = redisTemplate;
     }
@@ -81,21 +86,15 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
         String nodeId = "pilot-app";
         String redisKey = WS_ROUTER_PREFIX + userId;
 
-        // 通过 LocalWsSessionManager 注册会话
+        // 通过 LocalWsSessionManager 注册本地会话
         localWsSessionManager.addSession(session.getId(), session, userId);
         localWsSessionManager.addSessionRedisKey(session.getId(), redisKey);
 
-        // 写入 Redis 路由 Key（TTL 60s）
-        HashMap<String, Object> hashMap = new HashMap<>();
-        hashMap.put("nodeId", nodeId);
-        hashMap.put("lastHeartbeatTs", String.valueOf(System.currentTimeMillis()));
-        HashMap<String, Object> map = new HashMap<>();
-        map.put(session.getId(), JSONObject.toJSONString(hashMap));
-        redisTemplate.opsForHash().putAll(redisKey, map);
-        redisTemplate.expire(redisKey, WS_ROUTER_TTL_SECONDS, TimeUnit.SECONDS);
+        // 通过 WsSessionRoutingService 写入 Redis 路由表（TTL 60s）
+        wsSessionRoutingService.addSession(userId, session.getId(), nodeId);
 
         // 用户上线 ws通知用户在线设备数量
-        Long userDeviceOnlineCount = redisTemplate.opsForHash().size(redisKey);
+        Long userDeviceOnlineCount = wsSessionRoutingService.getUserSessionCount(userId);
         WsUploadDataDTO wsUploadDataDTO = new WsUploadDataDTO();
         wsUploadDataDTO.setType("USER_DEVICE_ONLINE_COUNT");
         WsUploadDataDTO.DataDTO dataDTO = new WsUploadDataDTO.DataDTO();
@@ -129,14 +128,8 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
         localWsSessionManager.refreshHeartbeat(session.getId());
 
         if (redisKey != null) {
-            // 刷新 Redis TTL
-            redisTemplate.expire(redisKey, WS_ROUTER_TTL_SECONDS, TimeUnit.SECONDS);
-            HashMap<String, Object> hashMap = new HashMap<>();
-            hashMap.put("nodeId", "pilot-app");
-            hashMap.put("lastHeartbeatTs", String.valueOf(System.currentTimeMillis()));
-            HashMap<String, Object> map = new HashMap<>();
-            map.put(session.getId(), JSONObject.toJSONString(hashMap));
-            redisTemplate.opsForHash().putAll(redisKey, map);
+            // 通过 WsSessionRoutingService 刷新心跳 + TTL
+            wsSessionRoutingService.refreshHeartbeat("admin", session.getId(), "pilot-app");
             log.debug("WS heartbeat refreshed: sessionId={}, key={}", session.getId(), redisKey);
             // 心跳包处理
             if ("ping".equals(type)) {
@@ -167,14 +160,16 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
             WsSession wsSession = localWsSessionManager.getWsSession(session.getId());
             String userId = wsSession != null ? wsSession.getUserId() : null;
 
-            // 从 Redis 删除路由 sessionKey
-            redisTemplate.opsForHash().delete(redisSessionKey, session.getId());
+            // 通过 WsSessionRoutingService 移除 Redis 路由条目
+            if (userId != null) {
+                wsSessionRoutingService.removeSession(userId, session.getId());
+            }
             // 通过 LocalWsSessionManager 移除本地会话 + redisKey映射
             localWsSessionManager.removeSession(session.getId());
 
             // 用户下线 推送该用户在线设备数量变更
             if (userId != null) {
-                Long userDeviceOnlineCount = redisTemplate.opsForHash().size(redisSessionKey);
+                Long userDeviceOnlineCount = wsSessionRoutingService.getUserSessionCount(userId);
                 WsUploadDataDTO wsUploadDataDTO = new WsUploadDataDTO();
                 wsUploadDataDTO.setType(WsTypeEnum.USER_DEVICE_ONLINE_COUNT.getCode());
                 WsUploadDataDTO.DataDTO dataDTO = new WsUploadDataDTO.DataDTO();
