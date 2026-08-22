@@ -118,3 +118,23 @@ logging:
     com.dboat.iot.mapper: DEBUG
     # 核心：mybatis底层日志，展示完整SQL语句
     org.mybatis: DEBUG
+
+
+
+#Thread pool
+thread-pool:
+  common:
+    core-size: 4
+    max-size: 16
+    queue-capacity: 500
+    keep-alive-seconds: 60
+  ws-push:
+    core-size: 4
+    max-size: 12
+    queue-capacity: 800
+    keep-alive-seconds: 60
+  redis-relay:
+    core-size: 4
+    max-size: 12
+    queue-capacity: 300
+    keep-alive-seconds: 60
