@@ -3,6 +3,7 @@ package com.dboat.iot.mqtt;
 import com.alibaba.fastjson2.JSONObject;
 import com.dboat.iot.common.constants.MqttConstants;
 import com.dboat.iot.dto.mqtt.*;
+import com.dboat.iot.dto.ws.WsUploadDataDTO;
 import com.dboat.iot.entity.SensorData;
 import com.dboat.iot.enums.SensorStatusEnum;
 import com.dboat.iot.service.DeviceLogService;
@@ -172,6 +173,7 @@ public class MqttMessageHandler {
     private void handleMqttDeviceDataUpload(String topic, MqttUpDataMessage message) {
         MqttMessageHeader header = message.getHeader();
         MqttMessagePayload payload = message.getPayload();
+
         if (ObjectUtils.anyNull(header, payload)) {
             log.error("Invalid UP_DATA payload: {}", payload);
             return;
@@ -189,9 +191,17 @@ public class MqttMessageHandler {
             return;
         }
 
+        // 校验消息是否是最新消息  查实时数据快照时间戳进行时间比对
+        JSONObject latestData = deviceStateStore.getIotDeviceLatestDataByDeviceId(deviceId);
+        if (ObjectUtils.isNotEmpty(latestData) && header.getTimestamp() < latestData.getLong("timestamp")) {
+            log.warn("Outdated sensor data, ignore: {}", header.getTraceId());
+            return;
+        }
+
         log.info("UP_DATA received from device [{}], traceId={}", deviceId, header.getTraceId());
 
-        // 自动注册设备（首次上报时自动创建）
+
+        // 自动注册设备（首次上报时自动创建）  TODO 可优化 先查redis注册设备列表
         deviceService.autoRegister(deviceId);
 
         // 解析传感器状态（从 payload.sensorStatus 中获取各传感器独立状态）

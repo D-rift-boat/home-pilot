@@ -72,22 +72,21 @@ public class DashboardController {
         // 1. 从 Redis 获取用户在线设备数
         String userId = request.getUserId();
         Long userDeviceOnlineCount = deviceStateStore.getUserDeviceOnlineCount(userId);
-        //deviceStateStore.getUserIotDeviceOnlineCount("admin");
+        Long iotDeviceOnlineCount = deviceStateStore.getUserIotDeviceOnlineCount(userId);
 
         // 2. 确定要查询的设备ID
-        Set<String> onlineIds = new HashSet<>();
-        if (userId == null || userId.isEmpty()) {
-            // 未指定设备，取第一个在线设备
-			onlineIds = deviceStateStore.getOnlineDeviceIds(userId);
-			//if (!onlineIds.isEmpty()) {
-            //    deviceId = onlineIds.iterator().next();
-            //}
-        }
+        //Set<String> onlineIds = deviceStateStore.getOnlineDeviceIds(userId);
+        //if (userId == null || userId.isEmpty()) {
+        //    // 未指定设备，取第一个在线设备
+		//	//if (!onlineIds.isEmpty()) {
+        //    //    deviceId = onlineIds.iterator().next();
+        //    //}
+        //}
 
-        int iotDeviceOnlineCount = onlineIds.size();
+        //int iotDeviceOnlineCount = onlineIds.size();
 
         // 3. 从 Redis 获取设备最新快照数据（MQTT 上报时写入）
-        WsUploadDataDTO latestData = deviceStateStore.getIotDeviceLatestData(userId);
+        WsUploadDataDTO latestData = deviceStateStore.getIotDeviceLatestDataByUserId(userId);
         latestData.getData().setIotDeviceOnlineCount(String.valueOf(iotDeviceOnlineCount));
         latestData.getData().setUserDeviceOnlineCount(String.valueOf(userDeviceOnlineCount));
 
@@ -125,7 +124,7 @@ public class DashboardController {
             }
 
             // 从 Redis 获取设备最新快照数据（MQTT 上报时写入）
-            JSONObject latestData = deviceStateStore.getDeviceLatestDataAsJson(deviceId);
+            JSONObject latestData = deviceStateStore.getIotDeviceLatestDataByDeviceId(deviceId);
             if (latestData != null) {
                 dto.setTemperatureAht(toBigDecimal(latestData.get("tempAht")));
                 dto.setHumidity(toBigDecimal(latestData.get("humidity")));

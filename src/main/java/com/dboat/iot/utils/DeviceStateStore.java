@@ -7,6 +7,7 @@ import com.dboat.iot.enums.WsTypeEnum;
 import com.dboat.iot.ws.DeviceWebSocketHandler;
 import jakarta.annotation.Resource;
 import org.apache.commons.lang3.ObjectUtils;
+import org.redisson.api.RMapCache;
 import org.redisson.api.RScript;
 import org.redisson.api.RedissonClient;
 import org.redisson.client.codec.StringCodec;
@@ -23,6 +24,7 @@ import org.springframework.context.annotation.Lazy;
 
 import java.util.*;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 import static com.dboat.iot.common.constants.MqttConstants.IOT_DEVICE_ONLINE_PREFIX;
 import static com.dboat.iot.common.constants.WebSocketConstants.WS_ROUTER_PREFIX;
@@ -111,6 +113,12 @@ public class DeviceStateStore {
     private RedissonClient redissonClient;
 
     /**
+     * Redisson 脚本执行器，用于执行 Lua 脚本
+     */
+    @Resource
+    private RScript scriptExecutor;
+
+    /**
      * Lua 脚本：仅当值为正数时递减
      */
     private static final String DECR_IF_POSITIVE_LUA =
@@ -128,6 +136,20 @@ public class DeviceStateStore {
             redis.call('EXPIRE', KEYS[1], 86400)
         return redis.call('HLEN', KEYS[1])
         """;
+
+    /**
+     * Lua 脚本：原子化 Hash 批量写入 + 设置整体过期时间
+     * <p>
+     * ARGV 约定：ARGV[1] = TTL秒数，ARGV[2..N] = field-value 对
+     * 分离 TTL 参数，避免 unpack 展开时混入 HSET 导致参数个数为奇数。
+     * </p>
+     */
+    private static final String HASH_PUT_ALL_WITH_EXPIRE_LUA = """
+            redis.call('HSET', KEYS[1], unpack(ARGV, 2, #ARGV))
+            redis.call('EXPIRE', KEYS[1], tonumber(ARGV[1]))
+            return 1
+            """;
+
     /**
      * Lua 脚本：仅当值为正数时递减
      */
@@ -181,28 +203,71 @@ public class DeviceStateStore {
      * @return true=新设备上线（Key 新建），false=已有设备数据刷新
      */
     public boolean updateDeviceLatestData(String deviceId, Map deviceDataMap) {
+        // 更新设备最新数据快照
         String key = buildLatestKey(deviceId);
-        //String lastReportTs = (String) stringRedisTemplate.opsForHash().get(key, "timestamp");
-        //是否是新上线遥感设备
-        //boolean isNewTelemetry = ObjectUtils.isEmpty(lastReportTs) || (System.currentTimeMillis() - Long.parseLong(lastReportTs)) > 60000; // 例如60s无上报判定离线
+        stringRedisTemplate.opsForValue().set(key, JSONObject.toJSONString(deviceDataMap), LATEST_DATA_TTL_HOURS, TimeUnit.HOURS);
 
-        //Boolean isNew = stringRedisTemplate.opsForValue().setIfAbsent(key, json, LATEST_DATA_TTL_HOURS, TimeUnit.HOURS);
-        //if (wasOffline) {
-        //    // 新设备首次上报，在线数 +1
-        //    incrementOnlineIotCount(DEFAULT_USER_ID);
-        //    log.info("Device online (was offline), INCR online count: {}", deviceId);
-        //    // 触发WS推送：设备上线事件 + 在线数变更
-        //    pushDeviceStatusChange(deviceId, true);
-        //    return true;
-        //}
-        stringRedisTemplate.opsForHash().putAll(key, deviceDataMap);
-        // 刷新TTL（24h无上报自动过期）
-        stringRedisTemplate.expire(key, LATEST_DATA_TTL_HOURS, TimeUnit.HOURS);
+        // iot设备心跳处理
+        // 获取所有订阅该设备的用户列表
+        Set<String> userIdSet = userDeviceRelService.getSubscriberUserIds(deviceId);
+        // 更新所属用户的在线iot设备列表
+        for (String userId : userIdSet) {
+            // 构建 IotDevLineDTO JSON 作为 Hash value（与 onlineUserIotDev/offlineUserIotDev 格式一致）
+            // Hash 结构：field=deviceId, value=IotDevLineDTO JSON
+            IotDevLineDTO devLine = IotDevLineDTO.builder()
+                    .deviceId(deviceId)
+                    .lastReportTs(deviceDataMap.get("timestamp").toString())
+                    .build();
+            Map<String, String> iotOnlineMap = new HashMap<>();
+            iotOnlineMap.put(deviceId, JSONObject.toJSONString(devLine));
+
+            String iotOnlineKey = IOT_DEVICE_ONLINE_PREFIX + userId;
+            // 原子化：批量写入 + 设置整key过期
+            atomicHashPutAll(iotOnlineKey, iotOnlineMap, LATEST_DATA_TTL_HOURS, TimeUnit.HOURS);
+        }
+
 
         log.debug("Refreshed device latest data: {}", deviceId);
         return true;
 
 
+    }
+
+    /**
+     * Hash 批量写入并原子设置整体过期
+     * <p>
+     * Lua ARGV 约定：ARGV[1] = TTL秒数，ARGV[2..N] = field-value 对。
+     * TTL 作为首个参数传入，与 field-value 对分离，确保 unpack 不会将 TTL 混入 HSET。
+     * </p>
+     *
+     * @param redisKey hash主key
+     * @param map      field-value 数据
+     * @param ttl      过期时长
+     * @param unit     时间单位
+     * @return true成功 / false失败
+     */
+    public boolean atomicHashPutAll(String redisKey, Map<String, String> map, long ttl, TimeUnit unit) {
+        if (map == null || map.isEmpty()) {
+            return false;
+        }
+        long ttlSeconds = unit.toSeconds(ttl);
+
+        // ARGV[1] = TTL秒数，ARGV[2..N] = field-value 对
+        List<Object> argv = new ArrayList<>();
+        argv.add(ttlSeconds);
+        for (Map.Entry<String, String> entry : map.entrySet()) {
+            argv.add(entry.getKey());
+            argv.add(entry.getValue());
+        }
+
+        Object res = scriptExecutor.eval(
+                RScript.Mode.READ_WRITE,
+                HASH_PUT_ALL_WITH_EXPIRE_LUA,
+                RScript.ReturnType.INTEGER,
+                Collections.singletonList(redisKey),
+                argv.toArray()
+        );
+        return Objects.equals(res, 1L);
     }
 
     /**
@@ -235,12 +300,34 @@ public class DeviceStateStore {
     }
 
     /**
-     * 获取设备最新数据并解析为 JSONObject
+     * 获取 deviceId 所属设备最新数据
+     * TODO 后期端设备考虑 flink 取计算后的数据 / 或带上deviceId 进行精确查询
      *
-     * @param userId 设备ID
-     * @return JSONObject，Key 不存在或解析失败时返回 null
+     * @param deviceId 用户ID
+     * @return WsUploadDataDTO 不存在或解析失败时返回 null
      */
-    public WsUploadDataDTO getIotDeviceLatestData(String userId) {
+    public JSONObject getIotDeviceLatestDataByDeviceId(String deviceId) {
+        String deviceLatestData = stringRedisTemplate.opsForValue().get(buildLatestKey(deviceId));
+        if (ObjectUtils.isNotEmpty(deviceLatestData)) {
+            try {
+                return JSONObject.parseObject(deviceLatestData);
+            } catch (Exception e) {
+                // 日志带上key和原始数据，方便线上排查脏数据
+                log.error("解析设备最新JSON数据失败，key:{}, rawData:{}", deviceId, deviceLatestData, e);
+            }
+        }
+        return new JSONObject();
+
+    }
+
+    /**
+     * 获取用户 userId 所属设备最新数据
+     * TODO 后期端设备考虑 flink 取计算后的数据 / 或带上deviceId 进行精确查询
+     *
+     * @param userId 用户ID
+     * @return WsUploadDataDTO 不存在或解析失败时返回 null
+     */
+    public WsUploadDataDTO getIotDeviceLatestDataByUserId(String userId) {
         // 获取用户订阅设备列表
         List<String> subscribedDeviceIds = userDeviceRelService.getSubscribedDeviceIds(userId);
         if(ObjectUtils.isEmpty(subscribedDeviceIds)){
@@ -270,7 +357,9 @@ public class DeviceStateStore {
                 .build();
 
         // type、timestamp 程序内部生成，不从redis读取
-        return WsUploadDataDTO.of(dataDTO, deviceDTO);
+        WsUploadDataDTO wsUploadDataDTO = WsUploadDataDTO.of(dataDTO, deviceDTO);
+        wsUploadDataDTO.setTimestamp(getStr(map, "timestamp"));
+        return wsUploadDataDTO;
 
     }
 
@@ -459,11 +548,11 @@ public class DeviceStateStore {
      *
      * @return 在线设备数，Key 不存在时返回 0
      */
-    public long getUserIotDeviceOnlineCount(String userId) {
+    public Long getUserIotDeviceOnlineCount(String userId) {
         String redisKey = IOT_DEVICE_ONLINE_PREFIX + userId;
 
-        Long countStr = stringRedisTemplate.opsForSet().size(redisKey);
-        if (ObjectUtils.isNotEmpty(countStr)) {
+        Long countStr = stringRedisTemplate.opsForHash().size(redisKey);
+        if (ObjectUtils.isEmpty(countStr)) {
             countStr = 0L;
         }
         return countStr;
@@ -498,7 +587,7 @@ public class DeviceStateStore {
     public Set<String> getOnlineDeviceIds(String userId) {
         String redisKey = IOT_DEVICE_ONLINE_PREFIX + userId;
 
-        Set<String> members = stringRedisTemplate.opsForSet().members(redisKey);
+        Set<String> members = stringRedisTemplate.opsForHash().keys(redisKey).stream().map(Object::toString).collect(Collectors.toSet());
         if (ObjectUtils.isEmpty(members)) {
             members = Collections.emptySet();
         }

@@ -1,5 +1,10 @@
 package com.dboat.iot.config;
 
+import jakarta.annotation.PostConstruct;
+import jakarta.annotation.Resource;
+import org.redisson.api.RScript;
+import org.redisson.api.RedissonClient;
+import org.redisson.client.codec.StringCodec;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
@@ -32,6 +37,14 @@ import org.springframework.data.redis.serializer.StringRedisSerializer;
  */
 @Configuration
 public class RedisConfig {
+
+    @Resource
+    private RedissonClient redissonClient;
+
+    @Bean("scriptExecutor")
+    public RScript scriptExecutor() {
+        return redissonClient.getScript(StringCodec.INSTANCE);
+    }
 
     /**
      * 创建 RedisTemplate&lt;String, Object&gt; Bean
