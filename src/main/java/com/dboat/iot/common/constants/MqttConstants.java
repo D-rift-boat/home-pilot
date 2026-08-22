@@ -25,4 +25,9 @@ public class MqttConstants {
 	 * 用户-订阅设备列表
 	 */
 	public static final String USER_IOT_DEVICE_SUB_PREFIX = "iot:user:sub:";
+
+	/**
+	 * IoT 设备业务离线判定阈值（毫秒）：60秒无上报 → 判定离线
+	 */
+	public static final long IOT_DEVICE_OFFLINE_TIMEOUT_MS = 60_000;
 }

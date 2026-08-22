@@ -135,7 +135,7 @@ public class MqttMessageHandler {
         try {
             if (topic.startsWith(TOPIC_SENSOR_UPLOAD_PREFIX)) {
                 // 传感器数据主题
-                handleSensorUpload(topic, upDataMessage);
+                handleMqttDeviceDataUpload(topic, upDataMessage);
             } else if (topic.startsWith(TOPIC_CLIENT_STAUTS_PREFIX)) {
                 // 若不启用 WebHook，则使用固件固定上下线机制 处理设备状态主题
                 if (!"true".equals(webHookSwitch)){
@@ -169,7 +169,7 @@ public class MqttMessageHandler {
      * </ol>
      * </p>
      */
-    private void handleSensorUpload(String topic, MqttUpDataMessage message) {
+    private void handleMqttDeviceDataUpload(String topic, MqttUpDataMessage message) {
         MqttMessageHeader header = message.getHeader();
         MqttMessagePayload payload = message.getPayload();
         if (ObjectUtils.anyNull(header, payload)) {
