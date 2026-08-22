@@ -266,7 +266,7 @@ public class TimeJob {
 							WsUploadDataDTO.DataDTO dataDTO = new WsUploadDataDTO.DataDTO();
 							WsUploadDataDTO.DeviceDTO deviceDTO = new WsUploadDataDTO.DeviceDTO();
 							deviceDTO.setDeviceId(deviceId);
-							dataDTO.setIotDeviceOnlineCount(String.valueOf(remainingCount));
+							dataDTO.setIotDeviceOnlineCount(Integer.valueOf(String.valueOf(remainingCount)));
 							wsUploadDataDTO.setData(dataDTO);
 							wsUploadDataDTO.setDevice(deviceDTO);
 							wsPushService.pushToUser(userId, WsTypeEnum.IOT_DEVICE_ONLINE_COUNT.getCode(), wsUploadDataDTO);

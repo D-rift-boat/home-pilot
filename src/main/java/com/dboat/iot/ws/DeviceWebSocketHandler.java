@@ -1,6 +1,6 @@
 package com.dboat.iot.ws;
 
-import com.alibaba.fastjson2.JSONObject;
+import com.dboat.iot.config.generator.NodeIdProvider;
 import com.dboat.iot.dto.ws.WsUploadDataDTO;
 import com.dboat.iot.enums.WsTypeEnum;
 import com.dboat.iot.service.ws.WsDistributedPushService;
@@ -15,9 +15,6 @@ import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
-
-import java.util.HashMap;
-import java.util.concurrent.TimeUnit;
 
 import static com.dboat.iot.common.constants.WebSocketConstants.*;
 
@@ -62,6 +59,12 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
     @Resource
     private WsSessionRoutingService wsSessionRoutingService;
 
+    /**
+     * 节点ID提供器，用于生成本地节点ID
+     */
+    @Resource
+    private NodeIdProvider nodeIdProvider;
+
     public DeviceWebSocketHandler(StringRedisTemplate redisTemplate) {
         this.redisTemplate = redisTemplate;
     }
@@ -83,7 +86,7 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
         //String[] params = extractUrlParams(session);
         String userId = "admin";
         String userDeviceId = "phone-001";
-        String nodeId = "pilot-app";
+        String nodeId = nodeIdProvider.getLocalNodeId();
         String redisKey = WS_ROUTER_PREFIX + userId;
 
         // 通过 LocalWsSessionManager 注册本地会话
@@ -100,7 +103,7 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
         WsUploadDataDTO.DataDTO dataDTO = new WsUploadDataDTO.DataDTO();
         WsUploadDataDTO.DeviceDTO deviceDTO = new WsUploadDataDTO.DeviceDTO();
         deviceDTO.setDeviceId("web-001");
-        dataDTO.setUserDeviceOnlineCount(String.valueOf(userDeviceOnlineCount));
+        dataDTO.setUserDeviceOnlineCount(Integer.valueOf(String.valueOf(userDeviceOnlineCount)));
         wsUploadDataDTO.setData((dataDTO));
         wsUploadDataDTO.setDevice(deviceDTO);
         wsUploadDataDTO.setData((dataDTO));
@@ -121,7 +124,7 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
     protected void handleTextMessage(WebSocketSession session, TextMessage message) throws Exception {
         String payload = message.getPayload();
         JsonNode json = objectMapper.readTree(payload);
-        String type = json.get("type").asText();
+        String type = json.get("msgType").asText();
         String redisKey = localWsSessionManager.getRedisKey(session.getId());
 
         // 通过 LocalWsSessionManager 刷新心跳时间（computeIfPresent 保证线程安全）
@@ -129,7 +132,7 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
 
         if (redisKey != null) {
             // 通过 WsSessionRoutingService 刷新心跳 + TTL
-            wsSessionRoutingService.refreshHeartbeat("admin", session.getId(), "pilot-app");
+            wsSessionRoutingService.refreshHeartbeat("admin", session.getId(), nodeIdProvider.getLocalNodeId());
             log.debug("WS heartbeat refreshed: sessionId={}, key={}", session.getId(), redisKey);
             // 心跳包处理
             if ("ping".equals(type)) {
@@ -175,7 +178,7 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
                 WsUploadDataDTO.DataDTO dataDTO = new WsUploadDataDTO.DataDTO();
                 WsUploadDataDTO.DeviceDTO deviceDTO = new WsUploadDataDTO.DeviceDTO();
                 deviceDTO.setDeviceId("web-001");
-                dataDTO.setUserDeviceOnlineCount(String.valueOf(userDeviceOnlineCount));
+                dataDTO.setUserDeviceOnlineCount(Integer.valueOf(String.valueOf(userDeviceOnlineCount)));
                 wsUploadDataDTO.setData((dataDTO));
                 wsUploadDataDTO.setDevice(deviceDTO);
                 wsPushService.pushToUser(userId, WsTypeEnum.USER_DEVICE_ONLINE_COUNT.getCode(), wsUploadDataDTO);

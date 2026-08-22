@@ -86,8 +86,8 @@ public class DashboardController {
 
         // 3. 从 Redis 获取设备最新快照数据（MQTT 上报时写入）
         WsUploadDataDTO latestData = deviceStateService.getIotDeviceLatestDataByUserId(userId);
-        latestData.getData().setIotDeviceOnlineCount(String.valueOf(iotDeviceOnlineCount));
-        latestData.getData().setUserDeviceOnlineCount(String.valueOf(userDeviceOnlineCount));
+        latestData.getData().setIotDeviceOnlineCount(Integer.valueOf(String.valueOf(iotDeviceOnlineCount)));
+        latestData.getData().setUserDeviceOnlineCount(Integer.valueOf(String.valueOf(userDeviceOnlineCount)));
 
         return Result.ok(latestData);
     }

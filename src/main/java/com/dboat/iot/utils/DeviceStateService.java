@@ -16,6 +16,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
@@ -251,25 +252,57 @@ public class DeviceStateService {
 
         WsUploadDataDTO.DataDTO dataDTO = WsUploadDataDTO.DataDTO.builder()
                 .tempAht(getStr(map, "tempAht"))
+                .tempBmp(getStr(map, "tempBmp"))
                 .humidity(getStr(map, "humidity"))
                 .pressureHpa(getStr(map, "pressureHpa"))
                 .altitude(getStr(map, "altitude"))
-                .iotDeviceOnlineCount(getStr(map, "iotDeviceOnlineCount"))
-                .userDeviceOnlineCount(getStr(map, "userDeviceOnlineCount"))
+                .iotDeviceOnlineCount(getInteger(map, "iotDeviceOnlineCount"))
+                .userDeviceOnlineCount(getInteger(map, "userDeviceOnlineCount"))
                 .build();
 
         WsUploadDataDTO.DeviceDTO deviceDTO = WsUploadDataDTO.DeviceDTO.builder()
                 .deviceId(getStr(map, "deviceId"))
-                .deviceStatus(getStr(map, "deviceStatus"))
-                .aht20Status(getStr(map, "aht20Status"))
-                .bmp280Status(getStr(map, "bmp280Status"))
-                .tempBmp(getStr(map, "tempBmp"))
+                .deviceStatus(getInteger(map, "deviceStatus"))
+                .aht20Status(getInteger(map, "aht20Status"))
+                .bmp280Status(getInteger(map, "bmp280Status"))
                 .build();
 
         // type、timestamp 程序内部生成，不从redis读取
         WsUploadDataDTO wsUploadDataDTO = WsUploadDataDTO.of(dataDTO, deviceDTO);
         wsUploadDataDTO.setTimestamp(getStr(map, "timestamp"));
         return wsUploadDataDTO;
+    }
+
+    /**
+     * 读取hash字段，获取BigDecimal
+     */
+    private static BigDecimal getNum(Map<Object, Object> map, String field) {
+
+        Object val = map.get(field);
+        if (val == null) {
+            return null;
+        }
+        String raw = val.toString().trim();
+        if ("".equals(raw) || "null".equalsIgnoreCase(raw)) {
+            return null;
+        }
+        return new BigDecimal(raw);
+    }
+
+    /**
+     * 读取hash字段，获取Integer
+     */
+    private static Integer getInteger(Map<Object, Object> map, String field) {
+
+        Object val = map.get(field);
+        if (val == null) {
+            return null;
+        }
+        String raw = val.toString().trim();
+        if ("".equals(raw) || "null".equalsIgnoreCase(raw)) {
+            return null;
+        }
+        return Integer.valueOf(new BigDecimal(raw).toString());
     }
 
     /**

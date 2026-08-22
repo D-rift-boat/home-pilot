@@ -314,7 +314,7 @@ public class MqttMessageHandler {
             WsUploadDataDTO.DataDTO dataDTO = new WsUploadDataDTO.DataDTO();
             WsUploadDataDTO.DeviceDTO deviceDTO = new WsUploadDataDTO.DeviceDTO();
             deviceDTO.setDeviceId(deviceId);
-            dataDTO.setIotDeviceOnlineCount(String.valueOf(onlineCount));
+            dataDTO.setIotDeviceOnlineCount(Integer.valueOf(String.valueOf(onlineCount)));
             wsUploadDataDTO.setData(dataDTO);
             wsUploadDataDTO.setDevice(deviceDTO);
             wsPushService.pushToUser(userId, WsTypeEnum.IOT_DEVICE_ONLINE_COUNT.getCode(), wsUploadDataDTO);
@@ -349,7 +349,7 @@ public class MqttMessageHandler {
             WsUploadDataDTO.DataDTO dataDTO = new WsUploadDataDTO.DataDTO();
             WsUploadDataDTO.DeviceDTO deviceDTO = new WsUploadDataDTO.DeviceDTO();
             deviceDTO.setDeviceId(deviceId);
-            dataDTO.setIotDeviceOnlineCount(String.valueOf(remainingCount));
+            dataDTO.setIotDeviceOnlineCount(Integer.valueOf(String.valueOf(remainingCount)));
             wsUploadDataDTO.setData(dataDTO);
             wsUploadDataDTO.setDevice(deviceDTO);
             wsPushService.pushToUser(userId, WsTypeEnum.IOT_DEVICE_ONLINE_COUNT.getCode(), wsUploadDataDTO);
@@ -441,15 +441,15 @@ public class MqttMessageHandler {
      * </pre>
      * </p>
      */
-    private HashMap<String, String> buildDeviceLatestMap(String deviceId, Integer deviceStatus,
+    private HashMap<String, Object> buildDeviceLatestMap(String deviceId, Integer deviceStatus,
                                                          Integer aht20Status, Integer bmp280Status,
-                                         MqttMessagePayload body, Long deviceTimestamp) {
-        HashMap<String, String> map = new HashMap<>();
+                                                         MqttMessagePayload body, Long deviceTimestamp) {
+        HashMap<String, Object> map = new HashMap<>();
         map.put("deviceId", deviceId);
-        map.put("deviceStatus", deviceStatus.toString());
-        map.put("aht20Status", aht20Status.toString());
-        map.put("bmp280Status", bmp280Status.toString());
-        map.put("timestamp", Long.valueOf(deviceTimestamp != null ? deviceTimestamp : System.currentTimeMillis()).toString());
+        map.put("deviceStatus", deviceStatus);
+        map.put("aht20Status", aht20Status);
+        map.put("bmp280Status", bmp280Status);
+        map.put("timestamp", deviceTimestamp != null ? deviceTimestamp : System.currentTimeMillis());
 
         // 填充 envData 字段
         MqttUpEnvData env = body.getEnvData(); // Changed from body.getEnvData() to payload.getEnvData()
@@ -458,7 +458,7 @@ public class MqttMessageHandler {
             map.put("tempBmp", formatBigDecimal(env.getTempBmp()));
             map.put("humidity", formatBigDecimal(env.getHumidity()));
             map.put("pressureHpa", formatBigDecimal(env.getPressureHpa()));
-            map.put("altitude", formatBigDecimal(env.getAltitude()))        ;
+            map.put("altitude", formatBigDecimal(env.getAltitude()));
         }
         return map;
     }
@@ -467,7 +467,7 @@ public class MqttMessageHandler {
      * 格式化BigDecimal字段
      */
     private String formatBigDecimal(BigDecimal value) {
-        if (value == null) return "0.00";
+        if (value == null) return null;
         return value.setScale(2, RoundingMode.HALF_UP).toPlainString();
     }
 
@@ -517,6 +517,7 @@ public class MqttMessageHandler {
             data.put("humidity", env.getHumidity());
             data.put("pressureHpa", env.getPressureHpa());
             data.put("altitude", env.getAltitude());
+            data.put("tempBmp", env.getTempBmp());
         }
         //data.put("onlineCount", onlineCount);
         message.put("data", data);
@@ -527,9 +528,7 @@ public class MqttMessageHandler {
         device.put("deviceStatus", deviceStatus);
         device.put("aht20Status", aht20Status);
         device.put("bmp280Status", bmp280Status);
-        if (env != null) {
-            device.put("tempBmp", env.getTempBmp());
-        }
+
         message.put("device", device);
 
         return message.toJSONString();
