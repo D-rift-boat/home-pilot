@@ -126,7 +126,6 @@ public class DeviceStateStore {
     private static final String LUA_IOT_ONLINE = """
         redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
             redis.call('EXPIRE', KEYS[1], 86400)
-                    
         return redis.call('HLEN', KEYS[1])
         """;
     /**

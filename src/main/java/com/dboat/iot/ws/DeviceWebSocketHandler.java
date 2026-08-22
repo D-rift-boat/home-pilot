@@ -127,15 +127,16 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
         String type = json.get("type").asText();
         String redisKey = sessionRedisKeyMap.get(session.getId());
         // 更新内存 Map 中的最后心跳时间 心跳不必带锁
-        WsSession wsSession = sessionMap.get(session.getId());
-        if (wsSession != null) {
-            wsSession.setLastHeartbeatTime(System.currentTimeMillis());
-        }
-        // 更新内存 Map 中的最后心跳时间（使用 computeIfPresent key带锁  确保线程安全）
-        //sessionMap.computeIfPresent(session.getId(), (k, v) -> {
-        //    v.setLastHeartbeatTime(System.currentTimeMillis());
-        //    return v;
-        //});
+        //WsSession wsSession = sessionMap.get(session.getId());
+        //if (wsSession != null) {
+        //    wsSession.setLastHeartbeatTime(System.currentTimeMillis());
+        //}
+
+        //更新内存 Map 中的最后心跳时间（使用 computeIfPresent key带锁  确保线程安全）
+        WsSession wsSession =sessionMap.computeIfPresent(session.getId(), (k, v) -> {
+            v.setLastHeartbeatTime(System.currentTimeMillis());
+            return v;
+        });
         if (redisKey != null) {
             // 刷新 Redis TTL
             redisTemplate.expire(redisKey, WS_ROUTER_TTL_SECONDS, TimeUnit.SECONDS);
