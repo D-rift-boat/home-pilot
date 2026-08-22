@@ -142,7 +142,7 @@ public class MqttMessageHandler {
         try {
             if (topic.startsWith(TOPIC_SENSOR_UPLOAD_PREFIX)) {
                 // 传感器数据主题
-                handleMqttDeviceDataUpload(topic, upDataMessage);
+                handleMqttDeviceDataUpload(upDataMessage);
             } else if (topic.startsWith(TOPIC_CLIENT_STAUTS_PREFIX)) {
                 // 若不启用 WebHook，则使用固件固定上下线机制 处理设备状态主题
                 if (!"true".equals(webHookSwitch)){
@@ -176,7 +176,7 @@ public class MqttMessageHandler {
      * </ol>
      * </p>
      */
-    private void handleMqttDeviceDataUpload(String topic, MqttUpDataMessage message) {
+    private void handleMqttDeviceDataUpload(MqttUpDataMessage message) {
         MqttMessageHeader header = message.getHeader();
         MqttMessagePayload payload = message.getPayload();
 
@@ -212,11 +212,11 @@ public class MqttMessageHandler {
 
         // 解析传感器状态（从 payload.sensorStatus 中获取各传感器独立状态）
         Integer deviceStatus = payload.getDeviceStatus() != null ? payload.getDeviceStatus() : SensorStatusEnum.NORMAL.getCode();
-        Integer aht20Status = 1;
-        Integer bmp280Status = 1;
+        Integer aht20Status = 2;
+        Integer bmp280Status = 2;
         if (payload.getSensorStatus() != null) {
-            aht20Status = payload.getSensorStatus().getAht20() != null ? payload.getSensorStatus().getAht20() : 1;
-            bmp280Status = payload.getSensorStatus().getBmp280() != null ? payload  .getSensorStatus().getBmp280() : 1;
+            aht20Status = payload.getSensorStatus().getAht20() != null ? payload.getSensorStatus().getAht20() : 2;
+            bmp280Status = payload.getSensorStatus().getBmp280() != null ? payload.getSensorStatus().getBmp280() : 2;
         }
 
         // ========== 异步写入 InfluxDB ==========
@@ -513,11 +513,11 @@ public class MqttMessageHandler {
         //long onlineCount = deviceStateService.getUserIotDeviceOnlineCount();
         MqttUpEnvData env = payload.getEnvData();
         if (env != null) {
-            data.put("tempAht", env.getTempAht());
-            data.put("humidity", env.getHumidity());
-            data.put("pressureHpa", env.getPressureHpa());
-            data.put("altitude", env.getAltitude());
-            data.put("tempBmp", env.getTempBmp());
+            data.put("tempAht", formatBigDecimal(env.getTempAht()));
+            data.put("humidity", formatBigDecimal(env.getHumidity()));
+            data.put("pressureHpa", formatBigDecimal(env.getPressureHpa()));
+            data.put("altitude", formatBigDecimal(env.getAltitude()));
+            data.put("tempBmp", formatBigDecimal(env.getTempBmp()));
         }
         //data.put("onlineCount", onlineCount);
         message.put("data", data);
