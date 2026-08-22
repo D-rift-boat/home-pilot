@@ -4,24 +4,20 @@ import com.alibaba.fastjson2.JSONObject;
 import com.dboat.iot.dto.ws.IotDevLineDTO;
 import com.dboat.iot.dto.ws.WsUploadDataDTO;
 import com.dboat.iot.enums.WsTypeEnum;
-import com.dboat.iot.ws.LocalWsSessionManager;
+import com.dboat.iot.service.ws.WsDistributedPushService;
 import jakarta.annotation.Resource;
 import org.apache.commons.lang3.ObjectUtils;
-import org.redisson.api.RMapCache;
 import org.redisson.api.RScript;
 import org.redisson.api.RedissonClient;
 import org.redisson.client.codec.StringCodec;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.data.redis.core.Cursor;
-import org.springframework.data.redis.core.ScanOptions;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Component;
 
 import com.dboat.iot.service.UserDeviceRelService;
 import org.springframework.context.annotation.Lazy;
-
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
@@ -87,10 +83,10 @@ public class DeviceStateStore {
     private static final long LATEST_DATA_TTL_HOURS = 24;
 
     /**
-     * 本地会话管理器，用于向前端广播实时数据
+     * WS分布式推送服务，用户级精准推送
      */
     @Resource
-    private LocalWsSessionManager localWsSessionManager;
+    private WsDistributedPushService wsPushService;
 
 
     /**
@@ -409,11 +405,12 @@ public class DeviceStateStore {
             wsUploadDataDTO.setType(WsTypeEnum.IOT_DEVICE_ONLINE_COUNT.getCode());
             WsUploadDataDTO.DataDTO dataDTO = new WsUploadDataDTO.DataDTO();
             WsUploadDataDTO.DeviceDTO deviceDTO = new WsUploadDataDTO.DeviceDTO();
-            deviceDTO.setDeviceId("web-001");
+            deviceDTO.setDeviceId(iotDeviceId);
             dataDTO.setIotDeviceOnlineCount(String.valueOf(userIotDevOnlineCount));
             wsUploadDataDTO.setData((dataDTO));
             wsUploadDataDTO.setDevice(deviceDTO);
-            localWsSessionManager.broadcastToAll(JSONObject.toJSONString(wsUploadDataDTO));
+            // 用户级推送：通知该订阅用户在线IoT设备数量变更
+            wsPushService.pushToUser(userId, WsTypeEnum.IOT_DEVICE_ONLINE_COUNT.getCode(), wsUploadDataDTO);
             log.info("Device offline", userId);
         }
 
@@ -437,11 +434,12 @@ public class DeviceStateStore {
             wsUploadDataDTO.setType(WsTypeEnum.IOT_DEVICE_ONLINE_COUNT.getCode());
             WsUploadDataDTO.DataDTO dataDTO = new WsUploadDataDTO.DataDTO();
             WsUploadDataDTO.DeviceDTO deviceDTO = new WsUploadDataDTO.DeviceDTO();
-            deviceDTO.setDeviceId("web-001");
+            deviceDTO.setDeviceId(iotDeviceId);
             dataDTO.setIotDeviceOnlineCount(String.valueOf(userIotDevOnlineCount));
             wsUploadDataDTO.setData((dataDTO));
             wsUploadDataDTO.setDevice(deviceDTO);
-            localWsSessionManager.broadcastToAll(JSONObject.toJSONString(wsUploadDataDTO));
+            // 用户级推送：通知该订阅用户在线IoT设备数量变更
+            wsPushService.pushToUser(userId, WsTypeEnum.IOT_DEVICE_ONLINE_COUNT.getCode(), wsUploadDataDTO);
             log.info("Device online iotDeviceId：{}", iotDeviceId);
         }
 
@@ -572,6 +570,51 @@ public class DeviceStateStore {
             countStr = 0L;
         }
         return countStr;
+    }
+
+    /**
+     * 获取用户在线IoT设备列表
+     * <p>
+     * 查询 iot:device:online:{userId} Hash，返回 deviceId → IotDevLineDTO JSON 映射。
+     * </p>
+     *
+     * @return 在线设备映射，Key 不存在时返回空 Map
+     */
+    public Map<String, JSONObject> getUserDeviceOnlineMapList(String userId) {
+        String redisKey = IOT_DEVICE_ONLINE_PREFIX + userId;
+
+        Map<String, JSONObject> entries = stringRedisTemplate.opsForHash().entries(redisKey).entrySet().stream()
+                .collect(Collectors.toMap(
+                        entry -> entry.getKey().toString(),
+                        entry -> JSONObject.parseObject(entry.getValue().toString())
+                ));
+        if (ObjectUtils.isEmpty(entries)) {
+            entries = Collections.emptyMap();
+        }
+        return entries;
+    }
+
+    /**
+     * 获取用户WS会话的节点路由映射
+     * <p>
+     * 查询 ws:session:{userId} Hash，返回 sessionId → {nodeId, lastHeartbeatTs} 映射。
+     * 用于分布式推送时确定用户在哪些节点有活跃WS连接。
+     * </p>
+     *
+     * @return 会话节点映射，Key 不存在时返回空 Map
+     */
+    public Map<String, JSONObject> getUserSessionNodeMap(String userId) {
+        String redisKey = WS_ROUTER_PREFIX + userId;
+
+        Map<String, JSONObject> entries = stringRedisTemplate.opsForHash().entries(redisKey).entrySet().stream()
+                .collect(Collectors.toMap(
+                        entry -> entry.getKey().toString(),
+                        entry -> JSONObject.parseObject(entry.getValue().toString())
+                ));
+        if (ObjectUtils.isEmpty(entries)) {
+            entries = Collections.emptyMap();
+        }
+        return entries;
     }
 
     // ==================== 在线设备扫描 ====================

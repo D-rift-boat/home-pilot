@@ -9,9 +9,10 @@ import com.dboat.iot.enums.SensorStatusEnum;
 import com.dboat.iot.service.DeviceLogService;
 import com.dboat.iot.service.DeviceService;
 import com.dboat.iot.service.SensorDataService;
+import com.dboat.iot.service.UserDeviceRelService;
+import com.dboat.iot.service.ws.WsDistributedPushService;
 import com.dboat.iot.utils.DeviceStateStore;
 import com.dboat.iot.utils.JsonUtils;
-import com.dboat.iot.ws.LocalWsSessionManager;
 import org.apache.commons.lang3.ObjectUtils;
 import org.eclipse.paho.client.mqttv3.MqttMessage;
 import org.slf4j.Logger;
@@ -26,6 +27,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 import static com.dboat.iot.common.constants.MqttConstants.IOT_DEVICE_ONLINE_PREFIX;
@@ -83,8 +85,10 @@ public class MqttMessageHandler {
     private final DeviceLogService deviceLogService;
     /** Redis 设备状态存储工具，用于刷新设备实时状态 */
     private final DeviceStateStore deviceStateStore;
-    /** 本地会话管理器，用于向前端广播实时数据 */
-    private final LocalWsSessionManager localWsSessionManager;
+    /** WS分布式推送服务，用户级精准推送 */
+    private final WsDistributedPushService wsPushService;
+    /** 用户-设备关系服务，用于查询设备订阅者列表 */
+    private final UserDeviceRelService userDeviceRelService;
     @Value("${mqtt.webHookSwitch}")
     private String webHookSwitch;
 
@@ -95,21 +99,24 @@ public class MqttMessageHandler {
      * @param deviceService        设备资产服务
      * @param sensorDataService    传感器数据服务
      * @param deviceLogService     设备日志服务
-     * @param deviceStateStore     Redis 状态存储工具
-     * @param localWsSessionManager  本地会话管理器（实时数据广播）
+     * @param deviceStateStore       Redis 状态存储工具
+     * @param wsPushService          WS分布式推送服务（用户级精准推送）
+     * @param userDeviceRelService   用户-设备关系服务（查询订阅者）
      */
     public MqttMessageHandler(@Lazy MqttClientManager mqttClientManager,
                                DeviceService deviceService,
                                SensorDataService sensorDataService,
                                DeviceLogService deviceLogService,
                                DeviceStateStore deviceStateStore,
-                               LocalWsSessionManager localWsSessionManager) {
+                               WsDistributedPushService wsPushService,
+                               UserDeviceRelService userDeviceRelService) {
         this.mqttClientManager = mqttClientManager;
         this.deviceService = deviceService;
         this.sensorDataService = sensorDataService;
         this.deviceLogService = deviceLogService;
         this.deviceStateStore = deviceStateStore;
-        this.localWsSessionManager = localWsSessionManager;
+        this.wsPushService = wsPushService;
+        this.userDeviceRelService = userDeviceRelService;
     }
 
     /**
@@ -222,12 +229,16 @@ public class MqttMessageHandler {
         Map deviceDataMap = buildDeviceLatestMap(deviceId, deviceStatus, aht20Status, bmp280Status, payload, header.getTimestamp());
         deviceStateStore.updateDeviceLatestData(deviceId, deviceDataMap);
 
-        // ========== WebSocket 实时推送 ==========
+        // ========== WebSocket 用户级实时推送 ==========
         try {
             String wsMessage = buildWebSocketPushMessage(message);
-            localWsSessionManager.broadcastToAll(wsMessage);
+            // 查询订阅该设备的用户列表，逐一推送
+            Set<String> subscriberUserIds = userDeviceRelService.getSubscriberUserIds(deviceId);
+            for (String userId : subscriberUserIds) {
+                wsPushService.pushToUser(userId, "REAL_TIME_DATA", wsMessage);
+            }
         } catch (Exception e) {
-            log.warn("Failed to broadcast WS message for device [{}]: {}", deviceId, e.getMessage());
+            log.warn("Failed to push WS message for device [{}]: {}", deviceId, e.getMessage());
         }
 
         log.info("Processed UP_DATA from device: {}", deviceId);

@@ -3,6 +3,7 @@ package com.dboat.iot.ws;
 import com.alibaba.fastjson2.JSONObject;
 import com.dboat.iot.dto.ws.WsUploadDataDTO;
 import com.dboat.iot.enums.WsTypeEnum;
+import com.dboat.iot.service.ws.WsDistributedPushService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.Resource;
@@ -52,6 +53,10 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
     @Resource
     private LocalWsSessionManager localWsSessionManager;
 
+    /** WS分布式推送服务，用户级精准推送 */
+    @Resource
+    private WsDistributedPushService wsPushService;
+
     public DeviceWebSocketHandler(StringRedisTemplate redisTemplate) {
         this.redisTemplate = redisTemplate;
     }
@@ -100,7 +105,8 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
         wsUploadDataDTO.setData((dataDTO));
         wsUploadDataDTO.setDevice(deviceDTO);
         wsUploadDataDTO.setData((dataDTO));
-        localWsSessionManager.broadcastToAll(JSONObject.toJSONString(wsUploadDataDTO));
+        // 用户级推送：通知该用户在线设备数量变更
+        wsPushService.pushToUser(userId, WsTypeEnum.USER_DEVICE_ONLINE_COUNT.getCode(), wsUploadDataDTO);
 
         log.info("WS connected: userId={}, nodeId={}, sessionId={}, total={}", userId, nodeId, session.getId(), localWsSessionManager.getOnlineSessionCount());
     }
@@ -157,22 +163,28 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) throws Exception {
         String redisSessionKey = localWsSessionManager.getRedisKey(session.getId());
         if (redisSessionKey != null) {
+            // 先提取 userId，用于后续用户级推送
+            WsSession wsSession = localWsSessionManager.getWsSession(session.getId());
+            String userId = wsSession != null ? wsSession.getUserId() : null;
+
             // 从 Redis 删除路由 sessionKey
             redisTemplate.opsForHash().delete(redisSessionKey, session.getId());
             // 通过 LocalWsSessionManager 移除本地会话 + redisKey映射
             localWsSessionManager.removeSession(session.getId());
 
-            // 用户下线  提取userId  更新用户在线设备数
-            Long userDeviceOnlineCount = redisTemplate.opsForHash().size(redisSessionKey);
-            WsUploadDataDTO wsUploadDataDTO = new WsUploadDataDTO();
-            wsUploadDataDTO.setType(WsTypeEnum.USER_DEVICE_ONLINE_COUNT.getCode());
-            WsUploadDataDTO.DataDTO dataDTO = new WsUploadDataDTO.DataDTO();
-            WsUploadDataDTO.DeviceDTO deviceDTO = new WsUploadDataDTO.DeviceDTO();
-            deviceDTO.setDeviceId("web-001");
-            dataDTO.setUserDeviceOnlineCount(String.valueOf(userDeviceOnlineCount));
-            wsUploadDataDTO.setData((dataDTO));
-            wsUploadDataDTO.setDevice(deviceDTO);
-            localWsSessionManager.broadcastToAll(JSONObject.toJSONString(wsUploadDataDTO));
+            // 用户下线 推送该用户在线设备数量变更
+            if (userId != null) {
+                Long userDeviceOnlineCount = redisTemplate.opsForHash().size(redisSessionKey);
+                WsUploadDataDTO wsUploadDataDTO = new WsUploadDataDTO();
+                wsUploadDataDTO.setType(WsTypeEnum.USER_DEVICE_ONLINE_COUNT.getCode());
+                WsUploadDataDTO.DataDTO dataDTO = new WsUploadDataDTO.DataDTO();
+                WsUploadDataDTO.DeviceDTO deviceDTO = new WsUploadDataDTO.DeviceDTO();
+                deviceDTO.setDeviceId("web-001");
+                dataDTO.setUserDeviceOnlineCount(String.valueOf(userDeviceOnlineCount));
+                wsUploadDataDTO.setData((dataDTO));
+                wsUploadDataDTO.setDevice(deviceDTO);
+                wsPushService.pushToUser(userId, WsTypeEnum.USER_DEVICE_ONLINE_COUNT.getCode(), wsUploadDataDTO);
+            }
             log.info("WS disconnected: sessionId={}, status={}, remaining={}", session.getId(), status, localWsSessionManager.getOnlineSessionCount());
         }
     }

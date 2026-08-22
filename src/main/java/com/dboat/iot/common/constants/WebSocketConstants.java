@@ -7,6 +7,11 @@ public class WebSocketConstants {
 	public static final String WS_ROUTER_PREFIX = "ws:session:";
 
 	/**
+	 * Redis ws中继 Key 前缀：ws:relay:
+	 */
+	public static final String WS_RELAY_PREFIX = "ws:relay:";
+
+	/**
 	 * Redis 路由 Key TTL：60秒（前端30s心跳，留2倍余量）
 	 */
 	public static final long WS_ROUTER_TTL_SECONDS = 60;
