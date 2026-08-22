@@ -11,7 +11,7 @@ import com.dboat.iot.service.DeviceService;
 import com.dboat.iot.service.SensorDataService;
 import com.dboat.iot.utils.DeviceStateStore;
 import com.dboat.iot.utils.JsonUtils;
-import com.dboat.iot.ws.DeviceWebSocketHandler;
+import com.dboat.iot.ws.LocalWsSessionManager;
 import org.apache.commons.lang3.ObjectUtils;
 import org.eclipse.paho.client.mqttv3.MqttMessage;
 import org.slf4j.Logger;
@@ -83,8 +83,8 @@ public class MqttMessageHandler {
     private final DeviceLogService deviceLogService;
     /** Redis 设备状态存储工具，用于刷新设备实时状态 */
     private final DeviceStateStore deviceStateStore;
-    /** WebSocket 处理器，用于向前端广播实时数据 */
-    private final DeviceWebSocketHandler webSocketHandler;
+    /** 本地会话管理器，用于向前端广播实时数据 */
+    private final LocalWsSessionManager localWsSessionManager;
     @Value("${mqtt.webHookSwitch}")
     private String webHookSwitch;
 
@@ -96,20 +96,20 @@ public class MqttMessageHandler {
      * @param sensorDataService    传感器数据服务
      * @param deviceLogService     设备日志服务
      * @param deviceStateStore     Redis 状态存储工具
-     * @param webSocketHandler     WebSocket 处理器（实时数据广播）
+     * @param localWsSessionManager  本地会话管理器（实时数据广播）
      */
     public MqttMessageHandler(@Lazy MqttClientManager mqttClientManager,
                                DeviceService deviceService,
                                SensorDataService sensorDataService,
                                DeviceLogService deviceLogService,
                                DeviceStateStore deviceStateStore,
-                               DeviceWebSocketHandler webSocketHandler) {
+                               LocalWsSessionManager localWsSessionManager) {
         this.mqttClientManager = mqttClientManager;
         this.deviceService = deviceService;
         this.sensorDataService = sensorDataService;
         this.deviceLogService = deviceLogService;
         this.deviceStateStore = deviceStateStore;
-        this.webSocketHandler = webSocketHandler;
+        this.localWsSessionManager = localWsSessionManager;
     }
 
     /**
@@ -225,7 +225,7 @@ public class MqttMessageHandler {
         // ========== WebSocket 实时推送 ==========
         try {
             String wsMessage = buildWebSocketPushMessage(message);
-            webSocketHandler.broadcastToAll(wsMessage);
+            localWsSessionManager.broadcastToAll(wsMessage);
         } catch (Exception e) {
             log.warn("Failed to broadcast WS message for device [{}]: {}", deviceId, e.getMessage());
         }

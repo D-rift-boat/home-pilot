@@ -3,7 +3,7 @@ package com.dboat.iot.job;
 import com.alibaba.fastjson2.JSONObject;
 import com.dboat.iot.dto.ws.IotDevLineDTO;
 import com.dboat.iot.utils.DeviceStateStore;
-import com.dboat.iot.ws.DeviceWebSocketHandler;
+import com.dboat.iot.ws.LocalWsSessionManager;
 import com.dboat.iot.ws.WsSession;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
@@ -41,7 +41,7 @@ public class TimeJob {
 	private RedisTemplate<String, Object> redisTemplate;
 
 	@Resource
-	private DeviceWebSocketHandler deviceWebSocketHandler;
+	private LocalWsSessionManager localWsSessionManager;
 
 	@Resource
 	private DeviceStateStore deviceStateStore;
@@ -62,35 +62,35 @@ public class TimeJob {
 	 */
 	@Scheduled(fixedRate = 15_000, initialDelay = 15_000)
 	public void cleanLocalExpiredSessions() {
-		Map<String, WsSession> sessionMap = deviceWebSocketHandler.getWsSessionMap();
-		Map<String, String> sessionRedisKeyMap = deviceWebSocketHandler.getWsSessionRedisKeyMap();
+		Map<String, WsSession> sessionMap = localWsSessionManager.getSessionMap();
 
 		if (sessionMap.isEmpty()) {
 			return;
 		}
-		sessionMap.forEach((key, session) -> {
-			if (System.currentTimeMillis() - session.getLastHeartbeatTime() > WS_HEARTBEAT_TIMEOUT_MILLIS) {
+		sessionMap.forEach((sessionId, wsSession) -> {
+			if (System.currentTimeMillis() - wsSession.getLastHeartbeatTime() > WS_HEARTBEAT_TIMEOUT_MILLIS) {
 				// 1.先尝试close（可能触发onClose，也可能不触发）
 				try {
-					if (session.getWebSocketSession().isOpen()) {
-						session.getWebSocketSession().close(CloseStatus.GOING_AWAY);
+					if (wsSession.getWebSocketSession().isOpen()) {
+						wsSession.getWebSocketSession().close(CloseStatus.GOING_AWAY);
 					}
 				} catch (Exception e) {
 					// ps：即使关闭失败，内存也不会泄漏，因为本地 sessionMap 已经删了，session 对象失去引用被 GC 回收
-					log.warn("关闭超时session失败, sessionId={}", session.getWebSocketSession().getId(), e);
+					log.warn("关闭超时session失败, sessionId={}", wsSession.getWebSocketSession().getId(), e);
 				}
-				// 清除本地超时会话
-				sessionMap.remove(key);
-				sessionRedisKeyMap.remove(session.getWebSocketSession().getId());
+				// 通过 LocalWsSessionManager 移除本地超时会话 + redisKey 映射
+				String redisKey = localWsSessionManager.getRedisKey(sessionId);
+				localWsSessionManager.removeSession(sessionId);
 				// 清除 Redis 在线会话列表中的该会话
-				//redisTemplate.delete(sessionRedisKeyMap.get(session.getWebSocketSession().getId()));
-				try {
-					//TODO 可以考虑异步执行
-					redisTemplate.opsForHash().delete(key, session.getWebSocketSession().getId());
-				} catch (Exception e) {
-					log.error("Error occurred while deleting session from Redis, key={}, sessionId={}", key, session.getWebSocketSession().getId(), e);
+				if (redisKey != null) {
+					try {
+						//TODO 可以考虑异步执行
+						redisTemplate.opsForHash().delete(redisKey, sessionId);
+					} catch (Exception e) {
+						log.error("Error occurred while deleting session from Redis, key={}, sessionId={}", redisKey, sessionId, e);
+					}
 				}
-				log.debug("Cleaning expired WS session: mapKey={}, sessionId={}", key, session.getWebSocketSession().getId());
+				log.debug("Cleaning expired WS session: sessionId={}", sessionId);
 			}
 		});
 	}

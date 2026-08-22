@@ -4,7 +4,7 @@ import com.alibaba.fastjson2.JSONObject;
 import com.dboat.iot.dto.ws.IotDevLineDTO;
 import com.dboat.iot.dto.ws.WsUploadDataDTO;
 import com.dboat.iot.enums.WsTypeEnum;
-import com.dboat.iot.ws.DeviceWebSocketHandler;
+import com.dboat.iot.ws.LocalWsSessionManager;
 import jakarta.annotation.Resource;
 import org.apache.commons.lang3.ObjectUtils;
 import org.redisson.api.RMapCache;
@@ -87,10 +87,10 @@ public class DeviceStateStore {
     private static final long LATEST_DATA_TTL_HOURS = 24;
 
     /**
-     * WebSocket 处理器，用于向前端广播实时数据
+     * 本地会话管理器，用于向前端广播实时数据
      */
     @Resource
-    private DeviceWebSocketHandler webSocketHandler;
+    private LocalWsSessionManager localWsSessionManager;
 
 
     /**
@@ -413,7 +413,7 @@ public class DeviceStateStore {
             dataDTO.setIotDeviceOnlineCount(String.valueOf(userIotDevOnlineCount));
             wsUploadDataDTO.setData((dataDTO));
             wsUploadDataDTO.setDevice(deviceDTO);
-            webSocketHandler.broadcastToAll(JSONObject.toJSONString(wsUploadDataDTO));
+            localWsSessionManager.broadcastToAll(JSONObject.toJSONString(wsUploadDataDTO));
             log.info("Device offline", userId);
         }
 
@@ -441,7 +441,7 @@ public class DeviceStateStore {
             dataDTO.setIotDeviceOnlineCount(String.valueOf(userIotDevOnlineCount));
             wsUploadDataDTO.setData((dataDTO));
             wsUploadDataDTO.setDevice(deviceDTO);
-            webSocketHandler.broadcastToAll(JSONObject.toJSONString(wsUploadDataDTO));
+            localWsSessionManager.broadcastToAll(JSONObject.toJSONString(wsUploadDataDTO));
             log.info("Device online iotDeviceId：{}", iotDeviceId);
         }
 

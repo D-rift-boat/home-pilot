@@ -11,6 +11,12 @@ public class WsSession {
 	 * session
 	 */
 	private WebSocketSession webSocketSession;
+
+	/**
+	 * 用户id
+	 */
+	private String userId;
+
 	/**
 	 * 最近心跳时间
 	 */

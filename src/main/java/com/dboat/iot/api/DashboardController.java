@@ -8,7 +8,6 @@ import com.dboat.iot.dto.ws.WsUploadDataDTO;
 import com.dboat.iot.entity.Device;
 import com.dboat.iot.service.DeviceService;
 import com.dboat.iot.utils.DeviceStateStore;
-import com.dboat.iot.ws.DeviceWebSocketHandler;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.annotation.Resource;
@@ -46,10 +45,6 @@ public class DashboardController {
 
     /** Redis 设备状态存储（获取实时数据 + 在线设备） */
     private final DeviceStateStore deviceStateStore;
-
-    /** WebSocket 处理器，用于向前端广播实时数据 */
-    @Resource
-    private DeviceWebSocketHandler webSocketHandler;
 
     /** 构造器注入依赖 */
     public DashboardController(DeviceService deviceService,
