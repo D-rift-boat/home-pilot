@@ -26,7 +26,7 @@ public class SensorDataQueryReqDTO extends BaseReqDTO {
 
     /** 设备唯一标识 */
     @NotBlank(message = "Device ID cannot be empty")
-    @Schema(description = "设备标识", example = "esp32s3-001")
+    @Schema(description = "设备标识", example = "esp32-S3-001")
     private String deviceId;
 
     /** 查询起始时间（含），格式 yyyy-MM-dd HH:mm:ss，不传则默认 1 小时前 */

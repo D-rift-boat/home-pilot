@@ -1,5 +1,6 @@
 package com.dboat.iot.dto.response;
 
+import com.fasterxml.jackson.annotation.JsonFormat;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 
@@ -55,7 +56,11 @@ public class SensorDataRespDTO {
     @Schema(description = "BMP280 状态: 1=正常, 2=失败, 3=部分失败")
     private Integer bmp280Status;
 
-    /** 数据上报时间 */
+    /**
+     * 数据上报时间
+     * 原spring默认序列化Instant毫秒值，格式为 ISO 8601，例如：2023-04-07T12:34:56.789Z
+     * 使用@JsonFormat(shape = JsonFormat.Shape.NUMBER)注解，序列化为毫秒值时间戳，例如：1680756896789
+     */
     @Schema(description = "上报时间")
     private Instant reportTime;
 }

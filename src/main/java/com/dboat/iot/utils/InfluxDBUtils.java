@@ -116,6 +116,9 @@ public class InfluxDBUtils {
         return null;
     }
 
+    /**
+     * Map FluxRecord to SensorData
+     */
     private SensorData mapRecordToSensorData(FluxRecord record, String deviceId) {
         SensorData data = new SensorData();
         data.setDeviceId(deviceId);
