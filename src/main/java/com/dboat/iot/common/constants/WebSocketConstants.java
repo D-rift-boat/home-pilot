@@ -2,6 +2,16 @@ package com.dboat.iot.common.constants;
 
 public class WebSocketConstants {
 	/**
+	 * 心跳ping
+	 */
+	public static final String PING = "PING";
+
+	/**
+	 * 心跳pong
+	 */
+	public static final String PONG = "PONG";
+
+	/**
 	 * Redis 路由 Key 前缀：ws:session:{userId}
 	 */
 	public static final String WS_ROUTER_PREFIX = "ws:session:";

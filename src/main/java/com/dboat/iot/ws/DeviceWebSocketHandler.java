@@ -135,9 +135,9 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
             wsSessionRoutingService.refreshHeartbeat("admin", session.getId(), nodeIdProvider.getLocalNodeId());
             log.debug("WS heartbeat refreshed: sessionId={}, key={}", session.getId(), redisKey);
             // 心跳包处理
-            if ("ping".equals(type)) {
+            if (PING.equals(type)) {
                 // 收到ping，立刻回复pong
-                String pong = "{\"type\":\"pong\"}";
+                String pong = "{\"msgType\":\"PONG\"}";
                 session.sendMessage(new TextMessage(pong));
             }
         } else {
