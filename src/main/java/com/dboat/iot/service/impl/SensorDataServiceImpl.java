@@ -52,10 +52,10 @@ public class SensorDataServiceImpl implements SensorDataService {
     @Override
     public List<SensorDataRespDTO> querySensorData(SensorDataQueryReqDTO request) {
         Instant start = request.getStartTime() != null
-                ? request.getStartTime().toInstant(ZoneOffset.UTC)
+                ? Instant.ofEpochMilli(request.getStartTime())
                 : Instant.now().minusSeconds(3600); // Default: last 1 hour
         Instant end = request.getEndTime() != null
-                ? request.getEndTime().toInstant(ZoneOffset.UTC)
+                ? Instant.ofEpochMilli(request.getEndTime())
                 : Instant.now();
 
         List<SensorData> dataList = influxDBUtils.querySensorData(

@@ -29,15 +29,9 @@ public class SensorDataQueryReqDTO extends BaseReqDTO {
     @Schema(description = "设备标识", example = "esp32-S3-001")
     private String deviceId;
 
-    /** 查询起始时间（含），格式 yyyy-MM-dd HH:mm:ss，不传则默认 1 小时前 */
-    @DateTimeFormat(pattern = "yyyy-MM-dd HH:mm:ss")
-    @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss", timezone = "GMT+8")
-    @Schema(description = "起始时间", example = "2025-01-01 00:00:00")
-    private LocalDateTime startTime;
+    @Schema(description = "查询起始UTC毫秒时间戳(世界时  0时区)", example = "1756000860000")
+    private Long startTime;
 
-    /** 查询结束时间（含），格式 yyyy-MM-dd HH:mm:ss，不传则默认当前时间 */
-    @DateTimeFormat(pattern = "yyyy-MM-dd HH:mm:ss")
-    @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss", timezone = "GMT+8")
-    @Schema(description = "结束时间", example = "2025-12-31 23:59:59")
-    private LocalDateTime endTime;
+    @Schema(description = "查询结束UTC毫秒时间戳(世界时  0时区)", example = "1756000880000")
+    private Long endTime;
 }
