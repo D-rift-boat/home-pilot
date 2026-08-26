@@ -59,6 +59,27 @@ spring:
           max-wait: 2000ms
         # 关闭超时：优雅关闭连接时等待命令完成的最大时间
         shutdown-timeout: 200ms
+  kafka:
+    bootstrap-servers: 127.0.0.1:9092
+    consumer:
+      group-id: backend-group-iot
+      enable-auto-commit: false # 关闭自动提交！业务处理完手动commit
+      auto-offset-reset: latest
+      max-poll-records: 200 # 一次拉取一批消息，方便批量写influxdb
+    producer:
+      acks: 1 # 至少Leader确认写入成功，兼顾性能与可靠性
+      retries: 3 # 发送失败自动重试次数
+    listener:
+      type: batch # 批量消费，一批消息一次性批量写入InfluxDB
+      ack-mode: manual_immediate # 手动提交偏移量，写入成功后立即提交
+      missing-topics-fatal: false # Topic不存在时不阻断应用启动（仅告警）
+
+# kafka topic名称（应用启动时会自动创建以下Topic）
+kafka:
+  topic:
+    telemetry-data-topic: telemetry-data # 传感器遥测数据Topic
+    dlq: dlq-iot # 消费失败死信Topic
+
 
 # MyBatis-Plus
 mybatis-plus:
@@ -90,6 +111,10 @@ mqtt:
   subscribe-qos:
     - 1
   webHookSwitch: true
+  # 直连订阅模式开关（遥测数据入库链路二选一，避免重复写入）：
+  #   true  = 后端直连订阅 EMQX，遥测数据直接写入 InfluxDB
+  #   false = EMQX 规则引擎将遥测数据转发至 Kafka，后端消费 Kafka 批量写入 InfluxDB
+  directSubscribeSwitch: false
 
 
 # InfluxDB
@@ -114,6 +139,8 @@ logging:
   level:
     com.dboat.iot: DEBUG
     org.eclipse.paho: INFO
+    # Kafka客户端日志降噪，避免大量心跳/拉取日志刷屏（问题排查时可临时调为INFO）
+    org.apache.kafka: WARN
     # 打印mapper接口所在包日志，会输出：执行SQL、参数、返回条数
     com.dboat.iot.mapper: DEBUG
     # 核心：mybatis底层日志，展示完整SQL语句

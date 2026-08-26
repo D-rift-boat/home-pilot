@@ -40,7 +40,7 @@ import java.util.UUID;
  *   <li>解析 ESP32-S3 设备上报的 JSON 传感器数据</li>
  *   <li>执行流式告警计算（In-Flight Alerting），在数据入库前完成异常检测</li>
  *   <li>刷新 Redis 设备实时状态</li>
- *   <li>异步写入 InfluxDB 时序数据库</li>
+ *   <li>直连订阅模式下异步写入 InfluxDB 时序数据库（关闭时由 EMQX 规则引擎转发 Kafka，消费端写入）</li>
  *   <li>处理设备离线事件，生成离线告警上下文</li>
  *   <li>向设备端下发指令（通过 iot/cmd/{deviceId} 主题，标准 DOWN_CMD 格式）</li>
  * </ul>
@@ -78,7 +78,7 @@ public class MqttMessageHandler {
     private final MqttClientManager mqttClientManager;
     /** 设备资产服务，用于自动注册设备 */
     private final DeviceService deviceService;
-    /** 传感器数据服务，用于异步写入 InfluxDB */
+    /** 传感器数据服务，用于写入/查询 InfluxDB 数据 */
     private final SensorDataService sensorDataService;
     /** 设备日志服务，用于记录设备上下线、异常等事件 */
     private final DeviceLogService deviceLogService;
@@ -90,6 +90,10 @@ public class MqttMessageHandler {
     private final UserDeviceRelService userDeviceRelService;
     @Value("${mqtt.webHookSwitch}")
     private String webHookSwitch;
+    /** 直连订阅模式开关：true=遥测数据直接写入 InfluxDB；false=由 EMQX 规则引擎转发 Kafka，消费端写入 */
+    @Value("${mqtt.directSubscribeSwitch}")
+    private String directSubscribeSwitch;
+    
 
     /**
      * 构造方法注入依赖（使用 @Lazy 解决与 MqttClientManager 的循环依赖）
@@ -145,9 +149,9 @@ public class MqttMessageHandler {
                 handleMqttDeviceDataUpload(upDataMessage);
             } else if (topic.startsWith(TOPIC_CLIENT_STAUTS_PREFIX)) {
                 // 若不启用 WebHook，则使用固件固定上下线机制 处理设备状态主题
-                if (!"true".equals(webHookSwitch)){
+                if (!"true".equals(webHookSwitch)) {
                     // 设备状态主题
-                    if (header.getMsgType().equals(MqttConstants.ONLINE)){
+                    if (header.getMsgType().equals(MqttConstants.ONLINE)) {
                         log.info("device online: {}", topic);
                         handleIotDeviceConnect(topic, upDataMessage);
                     } else if (header.getMsgType().equals(MqttConstants.OFFLINE)) {
@@ -161,6 +165,7 @@ public class MqttMessageHandler {
         } catch (Exception e) {
             log.error("Failed to handle MQTT message on topic [{}]: {}", topic, e.getMessage(), e);
         }
+
     }
 
     /**
@@ -170,13 +175,13 @@ public class MqttMessageHandler {
      * <ol>
      *   <li>解析 header + payload 结构</li>
      *   <li>自动注册设备（首次上报）</li>
-     *   <li>时序入库 InfluxDB</li>
+     *   <li>时序入库 InfluxDB（仅直连订阅模式，关闭时由 Kafka 消费端写入）</li>
      *   <li>刷新 Redis 设备快照（{userId}:{deviceId}:latest，TTL 24h）+ 维护在线数</li>
      *   <li>组装 WebSocket 推送报文，广播给所有前端会话</li>
      * </ol>
      * </p>
      */
-    private void handleMqttDeviceDataUpload(MqttUpDataMessage message) {
+    public void handleMqttDeviceDataUpload(MqttUpDataMessage message) {
         MqttMessageHeader header = message.getHeader();
         MqttMessagePayload payload = message.getPayload();
 
@@ -287,7 +292,7 @@ public class MqttMessageHandler {
      * 设备上线时：新增/刷新 用户在线iot设备列表、ws 推送在线iot设备数量
      * </p>
      */
-    private void handleIotDeviceConnect(String topic, MqttUpDataMessage message) {
+    public void handleIotDeviceConnect(String topic, MqttUpDataMessage message) {
         // 从主题中提取 clientId（即 device_id）
         if (ObjectUtils.isEmpty(message.getHeader())) {
             log.warn("Invalid disconnected topic format: {}", topic);
@@ -328,7 +333,7 @@ public class MqttMessageHandler {
      * 设备离线时：删除 Redis 最新数据 Key + DECR 在线数 + 记录离线日志
      * </p>
      */
-    private void handleIotDeviceDisconnected(String topic, MqttUpDataMessage message) {
+    public void handleIotDeviceDisconnected(String topic, MqttUpDataMessage message) {
         // 从主题中提取 clientId（即 device_id）
         if (ObjectUtils.isEmpty(message.getHeader())) {
             log.warn("Invalid disconnected topic format: {}", topic);
@@ -394,7 +399,7 @@ public class MqttMessageHandler {
     }
 
     /**
-     * 根据 UP_DATA payload 构建 SensorData 实体对象
+     * 根据 UP_DATA payload 构建 SensorData 实体对象（直连订阅模式直写 InfluxDB 用）
      *
      * @param deviceId      设备ID（从 header 中提取）
      * @param payload       UP_DATA 消息体

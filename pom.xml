@@ -132,6 +132,14 @@
             <artifactId>spring-boot-configuration-processor</artifactId>
             <optional>true</optional>
         </dependency>
+
+        <!-- Spring Kafka（消费 EMQX 规则引擎转发的遥测数据，批量写入 InfluxDB） -->
+        <dependency>
+            <groupId>org.springframework.kafka</groupId>
+            <artifactId>spring-kafka</artifactId>
+        </dependency>
+
+
     </dependencies>
 
     <build>

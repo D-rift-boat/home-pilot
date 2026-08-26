@@ -9,6 +9,7 @@ import org.eclipse.paho.client.mqttv3.*;
 import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Component;
 
@@ -30,6 +31,10 @@ public class MqttClientManager {
 	private final MqttMessageHandler messageHandler;
 
 	private MqttClient mqttClient;
+
+	/** 直连订阅模式开关：true=遥测数据直接写入 InfluxDB；false=由 EMQX 规则引擎转发 Kafka，消费端写入 */
+	@Value("${mqtt.directSubscribeSwitch}")
+	private String directSubscribeSwitch;
 
 	@Resource
 	private RedisTemplate<String, Object> redisTemplate;
@@ -64,7 +69,9 @@ public class MqttClientManager {
 
 				@Override
 				public void messageArrived(String topic, MqttMessage message) {
-					messageHandler.handleMessage(topic, message);
+					if ("true".equals(directSubscribeSwitch)) {
+						messageHandler.handleMessage(topic, message);
+					}
 				}
 
 				@Override
