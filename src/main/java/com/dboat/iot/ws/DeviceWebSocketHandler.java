@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.ObjectUtils;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
@@ -91,7 +92,6 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
 
         // 通过 LocalWsSessionManager 注册本地会话
         localWsSessionManager.addSession(session.getId(), session, userId);
-        localWsSessionManager.addSessionRedisKey(session.getId(), redisKey);
 
         // 通过 WsSessionRoutingService 写入 Redis 路由表（TTL 60s）
         wsSessionRoutingService.addSession(userId, session.getId(), nodeId);
@@ -110,7 +110,8 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
         // 用户级推送：通知该用户在线设备数量变更
         wsPushService.pushToUser(userId, WsTypeEnum.USER_DEVICE_ONLINE_COUNT.getCode(), wsUploadDataDTO);
 
-        log.info("WS connected: userId={}, nodeId={}, sessionId={}, total={}", userId, nodeId, session.getId(), localWsSessionManager.getOnlineSessionCount());
+        log.info("WS connected: userId={}, nodeId={}, sessionId={}, total={}", userId, nodeId, session.getId(),
+                localWsSessionManager.getOnlineSessionCount());
     }
 
     /**
@@ -125,15 +126,15 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
         String payload = message.getPayload();
         JsonNode json = objectMapper.readTree(payload);
         String type = json.get("msgType").asText();
-        String redisKey = localWsSessionManager.getRedisKey(session.getId());
+        WsSession wsSession = localWsSessionManager.getWsSession(session.getId());
 
         // 通过 LocalWsSessionManager 刷新心跳时间（computeIfPresent 保证线程安全）
         localWsSessionManager.refreshHeartbeat(session.getId());
 
-        if (redisKey != null) {
+        if (ObjectUtils.isNotEmpty(wsSession)) {
             // 通过 WsSessionRoutingService 刷新心跳 + TTL
             wsSessionRoutingService.refreshHeartbeat("admin", session.getId(), nodeIdProvider.getLocalNodeId());
-            log.debug("WS heartbeat refreshed: sessionId={}, key={}", session.getId(), redisKey);
+            log.debug("WS heartbeat refreshed: sessionId={}, key={}", session.getId());
             // 心跳包处理
             if (PING.equals(type)) {
                 // 收到ping，立刻回复pong
@@ -142,7 +143,7 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
             }
         } else {
             // 心跳超时后收到前端异常发来的消息处理 由后端巡检任务处理 关闭连接
-            log.info("WS heartbeat missing: sessionId={}, key={}", session.getId(), redisKey);
+            log.debug("WS heartbeat missing: sessionId={}, key={}", session.getId());
         }
     }
 
@@ -157,34 +158,31 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
      */
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) throws Exception {
-        String redisSessionKey = localWsSessionManager.getRedisKey(session.getId());
-        if (redisSessionKey != null) {
-            // 先提取 userId，用于后续用户级推送
-            WsSession wsSession = localWsSessionManager.getWsSession(session.getId());
-            String userId = wsSession != null ? wsSession.getUserId() : null;
+        // 先提取 userId，用于后续用户级推送
+        WsSession wsSession = localWsSessionManager.getWsSession(session.getId());
+        String userId = wsSession != null ? wsSession.getUserId() : null;
 
-            // 通过 WsSessionRoutingService 移除 Redis 路由条目
-            if (userId != null) {
-                wsSessionRoutingService.removeSession(userId, session.getId());
-            }
-            // 通过 LocalWsSessionManager 移除本地会话 + redisKey映射
-            localWsSessionManager.removeSession(session.getId());
-
-            // 用户下线 推送该用户在线设备数量变更
-            if (userId != null) {
-                Long userDeviceOnlineCount = wsSessionRoutingService.getUserSessionCount(userId);
-                WsUploadDataDTO wsUploadDataDTO = new WsUploadDataDTO();
-                wsUploadDataDTO.setType(WsTypeEnum.USER_DEVICE_ONLINE_COUNT.getCode());
-                WsUploadDataDTO.DataDTO dataDTO = new WsUploadDataDTO.DataDTO();
-                WsUploadDataDTO.DeviceDTO deviceDTO = new WsUploadDataDTO.DeviceDTO();
-                deviceDTO.setDeviceId("web-001");
-                dataDTO.setUserDeviceOnlineCount(Integer.valueOf(String.valueOf(userDeviceOnlineCount)));
-                wsUploadDataDTO.setData((dataDTO));
-                wsUploadDataDTO.setDevice(deviceDTO);
-                wsPushService.pushToUser(userId, WsTypeEnum.USER_DEVICE_ONLINE_COUNT.getCode(), wsUploadDataDTO);
-            }
-            log.info("WS disconnected: sessionId={}, status={}, remaining={}", session.getId(), status, localWsSessionManager.getOnlineSessionCount());
+        // 通过 WsSessionRoutingService 移除 Redis 路由条目
+        if (userId != null) {
+            wsSessionRoutingService.removeSession(userId, session.getId());
         }
+        // 通过 LocalWsSessionManager 移除本地会话 + redisKey映射
+        localWsSessionManager.removeSession(session.getId());
+
+        // 用户下线 推送该用户在线设备数量变更
+        if (userId != null) {
+            Long userDeviceOnlineCount = wsSessionRoutingService.getUserSessionCount(userId);
+            WsUploadDataDTO wsUploadDataDTO = new WsUploadDataDTO();
+            wsUploadDataDTO.setType(WsTypeEnum.USER_DEVICE_ONLINE_COUNT.getCode());
+            WsUploadDataDTO.DataDTO dataDTO = new WsUploadDataDTO.DataDTO();
+            WsUploadDataDTO.DeviceDTO deviceDTO = new WsUploadDataDTO.DeviceDTO();
+            deviceDTO.setDeviceId("web-001");
+            dataDTO.setUserDeviceOnlineCount(Integer.valueOf(String.valueOf(userDeviceOnlineCount)));
+            wsUploadDataDTO.setData((dataDTO));
+            wsUploadDataDTO.setDevice(deviceDTO);
+            wsPushService.pushToUser(userId, WsTypeEnum.USER_DEVICE_ONLINE_COUNT.getCode(), wsUploadDataDTO);
+        }
+        log.info("WS disconnected: sessionId={}, status={}, remaining={}", session.getId(), status, localWsSessionManager.getOnlineSessionCount());
     }
 
     /**

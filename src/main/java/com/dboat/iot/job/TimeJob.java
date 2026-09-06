@@ -65,56 +65,6 @@ public class TimeJob {
 	private UserDeviceRelService userDeviceRelService;
 
 	/**
-	 * 定时清理过期iot设备在线列表
-	 */
-
-
-
-	/**
-	 * 定时清理本地缓存过期会话（每 15 秒执行一次）
-	 * <p>
-	 * 遍历内存 Map，检查对应 Redis 路由 Key 是否存活：
-	 * - Key 不存在（已过期）→ 说明前端心跳中断，关闭 Session 并从 Map 移除
-	 * - Key 存在 → 连接正常，跳过
-	 * </p>
-	 */
-	@Scheduled(fixedRate = 15_000, initialDelay = 15_000)
-	public void cleanLocalExpiredSessions() {
-		Map<String, WsSession> sessionMap = localWsSessionManager.getSessionMap();
-
-		if (sessionMap.isEmpty()) {
-			return;
-		}
-		sessionMap.forEach((sessionId, wsSession) -> {
-			if (System.currentTimeMillis() - wsSession.getLastHeartbeatTime() > WS_HEARTBEAT_TIMEOUT_MILLIS) {
-				// 1.先尝试close（可能触发onClose，也可能不触发）
-				try {
-					if (wsSession.getWebSocketSession().isOpen()) {
-						wsSession.getWebSocketSession().close(CloseStatus.GOING_AWAY);
-					}
-				} catch (Exception e) {
-					// ps：即使关闭失败，内存也不会泄漏，因为本地 sessionMap 已经删了，session 对象失去引用被 GC 回收
-					log.warn("关闭超时session失败, sessionId={}", wsSession.getWebSocketSession().getId(), e);
-				}
-				// 通过 LocalWsSessionManager 移除本地超时会话 + redisKey 映射
-				String redisKey = localWsSessionManager.getRedisKey(sessionId);
-				localWsSessionManager.removeSession(sessionId);
-				// 通过 WsSessionRoutingService 清除 Redis 路由表中的该会话
-				String userId = wsSession.getUserId();
-				if (userId != null) {
-					try {
-						wsSessionRoutingService.removeSession(userId, sessionId);
-					} catch (Exception e) {
-						log.error("Error occurred while deleting session from Redis routing store, userId={}, sessionId={}", userId, sessionId, e);
-					}
-				}
-				log.debug("Cleaning expired WS session: sessionId={}", sessionId);
-			}
-		});
-	}
-
-
-	/**
 	 * 定时检查并清理过期的 Redis 会话（每 65 秒执行一次）
 	 * <p>
 	 * 遍历 Redis 中所有匹配的 Key，检查其中的 Hash 字段：

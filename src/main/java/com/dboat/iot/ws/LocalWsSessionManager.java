@@ -1,26 +1,33 @@
 package com.dboat.iot.ws;
 
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
+import com.github.benmanes.caffeine.cache.RemovalCause;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.ObjectUtils;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 
+import jakarta.annotation.PostConstruct;
 import java.io.IOException;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.stream.Collectors;
+import java.time.Duration;
+import java.util.*;
+import java.util.concurrent.TimeUnit;
+import static com.dboat.iot.common.constants.WebSocketConstants.WS_ROUTER_PREFIX;
 
 /**
  * 本地 WebSocket 会话管理器
  * <p>
- * 统一管理本节点所有 WS 会话的内存状态，包括：
+ * 基于 Caffeine 本地缓存维护 sessionId → WsSession 的内存会话表。
+ * 本类只负责本节点会话的内存视图，不再维护 Redis 路由映射（分布式路由由其他组件负责）。
+ * </p>
+ * <p>
+ * 生命周期设计：
  * <ul>
- *   <li>sessionMap：sessionId → WsSession（内存会话表）</li>
- *   <li>sessionRedisKeyMap：sessionId → Redis 路由 Key（用于关闭时清理）</li>
- *   <li>心跳刷新、按用户查询、广播推送等</li>
+ *   <li>正常断开：WebSocket 关闭回调主动调用 removeSession()</li>
+ *   <li>异常断开（网络闪断、客户端崩溃，关闭回调不触发）：由 Caffeine 访问过期策略兜底驱逐僵尸会话，避免内存泄漏</li>
  * </ul>
- * 原散落在 DeviceWebSocketHandler 中的本地缓存逻辑统一收归此类管理。
  * </p>
  *
  * @author dboat
@@ -29,183 +36,222 @@ import java.util.stream.Collectors;
 @Slf4j
 public class LocalWsSessionManager {
 
-	/**
-	 * 内存会话表：key = sessionId, value = WsSession（封装了 userId 的 session）
-	 */
-	private final ConcurrentHashMap<String, WsSession> sessionMap = new ConcurrentHashMap<>();
+    /**
+     * 本地会话缓存：key = sessionId, value = WsSession
+     * 访问过期 90 秒：90 秒内无心跳访问则自动驱逐（兜底清理无关闭回调的僵尸连接）
+     */
+    private Cache<String, WsSession> sessionCache;
 
-	/**
-	 * Session 与 Redis 路由 Key 的映射：sessionId → redisKey，用于关闭时清理
-	 */
-	private final ConcurrentHashMap<String, String> sessionRedisKeyMap = new ConcurrentHashMap<>();
+    /**
+     * key = userId, value = 当前本机该用户所有sessionId集合
+     * 访问过期90s；用户长时间无心跳，整个集合自动过期清理
+     */
+    private Cache<String, Set<String>> userSessionCache;
 
-	// ==================== 会话生命周期 ====================
+    @PostConstruct
+    public void init() {
+        sessionCache = Caffeine.newBuilder()
+                // 访问过期：心跳刷新会触发访问，重置倒计时；正常在线会话不会被误驱逐
+                .expireAfterAccess(48, TimeUnit.SECONDS)
+                // 驱逐监听器：缓存条目被移除/过期时回调，兜底释放资源
+                .removalListener((String sessionId, WsSession wsSession, RemovalCause cause) -> {
+                    if (wsSession == null) {
+                        return;
+                    }
+                    WebSocketSession rawSession = wsSession.getWebSocketSession();
+                    log.debug("WS session evicted, sessionId={}, userId={}, cause={}",
+                            sessionId, wsSession.getUserId(), cause);
+                    // 兜底关闭仍未断开的会话，防止僵尸连接残留
+                    if (rawSession.isOpen()) {
+                        try {
+                            rawSession.close();
+                        } catch (IOException e) {
+                            log.error("Close evicted session error, sessionId={}", sessionId, e);
+                        }
+                    }
 
-	/**
-	 * WS 连接建立时注册会话
-	 *
-	 * @param sessionId WebSocket 会话ID
-	 * @param session   原始 WebSocketSession
-	 * @param userId    用户ID
-	 */
-	public void addSession(String sessionId, WebSocketSession session, String userId) {
-		sessionMap.put(sessionId, new WsSession(session, userId, System.currentTimeMillis()));
-	}
+                    //清除user set中的sessionId
+                    String userId = wsSession.getUserId();
+                    if(userId != null){
+                        Set<String> set = userSessionCache.getIfPresent(userId);
+                        if(set != null){
+                            set.remove(sessionId);
+                        }
+                    }
+                })
+                // 开启统计，供监控指标采集
+                .recordStats()
+                .build();
 
-	/**
-	 * 注册会话对应的 Redis 路由 Key 映射
-	 *
-	 * @param sessionId WebSocket 会话ID
-	 * @param redisKey  Redis 路由 Key
-	 */
-	public void addSessionRedisKey(String sessionId, String redisKey) {
-		sessionRedisKeyMap.put(sessionId, redisKey);
-	}
+        //invalidate 会异步回调 removalListener
+        userSessionCache = Caffeine.newBuilder()
+                .expireAfterAccess(Duration.ofSeconds(48))
+                .build();
+    }
 
-	/**
-	 * WS 断开时移除会话及其 Redis 路由映射
-	 *
-	 * @param sessionId WebSocket 会话ID
-	 */
-	public void removeSession(String sessionId) {
-		sessionMap.remove(sessionId);
-		sessionRedisKeyMap.remove(sessionId);
-	}
+    // ==================== 会话生命周期 ====================
 
-	/**
-	 * 刷新会话心跳时间（使用 computeIfPresent 保证线程安全）
-	 *
-	 * @param sessionId WebSocket 会话ID
-	 */
-	public void refreshHeartbeat(String sessionId) {
-		sessionMap.computeIfPresent(sessionId, (k, v) -> {
-			v.setLastHeartbeatTime(System.currentTimeMillis());
-			return v;
-		});
-	}
+    /**
+     * WS 连接建立时注册会话
+     *
+     * @param sessionId WebSocket 会话ID
+     * @param session   原始 WebSocketSession
+     * @param userId    用户ID
+     */
+    public void addSession(String sessionId, WebSocketSession session, String userId) {
+        WsSession wsSession = new WsSession(session, userId, System.currentTimeMillis());
+        sessionCache.put(sessionId, wsSession);
+        Set<String> sessionIdSet = userSessionCache.get(userId, k -> new HashSet<>());
+        sessionIdSet.add(sessionId);
+    }
 
-	/**
-	 * 获取会话关联的 Redis 路由 Key
-	 *
-	 * @param sessionId WebSocket 会话ID
-	 * @return Redis 路由 Key，不存在返回 null
-	 */
-	public String getRedisKey(String sessionId) {
-		return sessionRedisKeyMap.get(sessionId);
-	}
+    /**
+     * WS 断开时移除会话（正常关闭回调调用）
+     *
+     * @param sessionId WebSocket 会话ID
+     */
+    public void removeSession(String sessionId) {
+        sessionCache.invalidate(sessionId);
+    }
 
-	/**
-	 * 获取指定 WsSession（不拷贝，直接引用）
-	 *
-	 * @param sessionId WebSocket 会话ID
-	 * @return WsSession，不存在返回 null
-	 */
-	public WsSession getWsSession(String sessionId) {
-		return sessionMap.get(sessionId);
-	}
+    /**
+     * 刷新会话心跳时间
+     * <p>
+     * 关键点：通过 getIfPresent 触发 Caffeine 访问，重置 expireAfterAccess 倒计时。
+     * 不能只修改 WsSession 内部 lastHeartbeatTime，否则缓存感知不到访问，正常在线会话会被误驱逐。
+     * </p>
+     *
+     * @param sessionId WebSocket 会话ID
+     */
+    public void refreshHeartbeat(String sessionId) {
+        WsSession wsSession = sessionCache.getIfPresent(sessionId);
+        if (wsSession != null) {
+            wsSession.setLastHeartbeatTime(System.currentTimeMillis());
+            String userId = wsSession.getUserId();
+            if(userId != null){
+                userSessionCache.getIfPresent(userId);
+            }
+        }
+    }
 
-	// ==================== 查询 ====================
+    /**
+     * 获取指定 WsSession
+     *
+     * @param sessionId WebSocket 会话ID
+     * @return WsSession，不存在返回 null
+     */
+    public WsSession getWsSession(String sessionId) {
+        return sessionCache.getIfPresent(sessionId);
+    }
 
-	/**
-	 * 获取该用户在本机的所有在线 WebSocketSession
-	 *
-	 * @param userId 用户ID
-	 * @return 在线 WebSocketSession 列表
-	 */
-	public List<WebSocketSession> getSessionsByUser(String userId) {
-		return sessionMap.values().stream()
-				.filter(w -> userId.equals(w.getUserId()))
-				.map(WsSession::getWebSocketSession)
-				.filter(WebSocketSession::isOpen)
-				.collect(Collectors.toList());
-	}
+    // ==================== 查询 ====================
 
-	/**
-	 * 本机是否还有该用户的 session
-	 *
-	 * @param userId 用户ID
-	 * @return true=本机仍有该用户在线
-	 */
-	public boolean hasUserSession(String userId) {
-		return sessionMap.values().stream()
-				.anyMatch(w -> userId.equals(w.getUserId()));
-	}
+    /**
+     * 获取该用户在本机的所有在线 WebSocketSession
+     *
+     * @param userId 用户ID
+     * @return 在线 WebSocketSession 列表
+     */
+    public List<WebSocketSession> getSessionsByUser(String userId) {
+        Set<String> sessionIdSet = userSessionCache.getIfPresent(userId);
+        if (ObjectUtils.isEmpty(sessionIdSet)) {
+            return Collections.emptyList();
+        }
+        List<WebSocketSession> result = new ArrayList<>();
+        for (String sid : sessionIdSet) {
+            WsSession session = sessionCache.getIfPresent(sid);
+            if(ObjectUtils.isNotEmpty(session) && session.getWebSocketSession().isOpen()){
+                result.add(session.getWebSocketSession());
+            }
+        }
+        return result;
+    }
 
-	/**
-	 * 获取当前在线会话数（用于监控/日志）
-	 */
-	public int getOnlineSessionCount() {
-		return sessionMap.size();
-	}
+    /**
+     * 本机是否还有该用户的 session
+     *
+     * @param userId 用户ID
+     * @return true=本机仍有该用户在线
+     */
+    public boolean hasUserSession(String userId) {
+        return sessionCache.asMap().values().stream()
+                .anyMatch(w -> userId.equals(w.getUserId()));
+    }
 
-	/**
-	 * 获取内存会话表（只读视图，供定时巡检任务使用）
-	 */
-	public Map<String, WsSession> getSessionMap() {
-		return sessionMap;
-	}
+    /**
+     * 获取当前在线会话数（估算值，用于监控/日志）
+     */
+    public int getOnlineSessionCount() {
+        return (int) sessionCache.estimatedSize();
+    }
 
-	// ==================== 广播 ====================
+    /**
+     * 获取内存会话表（只读视图，供定时巡检任务使用）
+     */
+    public Map<String, WsSession> getSessionMap() {
+        return sessionCache.asMap();
+    }
 
-	/**
-	 * 向所有在线 WebSocket 客户端广播消息
-	 * <p>
-	 * 遍历内存 Map 中所有活跃 Session，逐一推送 TextMessage。
-	 * 发送失败的 Session（如连接已断开但未触发关闭回调）会被自动跳过。
-	 * </p>
-	 *
-	 * @param message JSON 格式的消息字符串
-	 */
-	public void broadcastToAll(String message) {
-		if (sessionMap.isEmpty()) {
-			return;
-		}
-		TextMessage textMessage = new TextMessage(message);
-		sessionMap.forEach((key, wsSession) -> {
-			if (wsSession.getWebSocketSession().isOpen()) {
-				try {
-					wsSession.getWebSocketSession().sendMessage(textMessage);
-				} catch (IOException e) {
-					log.warn("Failed to send WS message to session [{}]: {}", key, e.getMessage());
-					// 发送失败，标记清理（下次定时任务会处理）
-				}
-			}
-		});
-	}
+    // ==================== 广播 ====================
 
-	/**
-	 * 按 Key 前缀批量推送消息
-	 * <p>
-	 * 遍历 sessionMap，筛选出 mapKey 以指定前缀开头的会话，批量发送消息。
-	 * 支持按不同粒度匹配：
-	 * <ul>
-	 *   <li>按 userId 匹配：前缀 "admin:" → 推送给 admin 下所有设备/节点</li>
-	 *   <li>按 userId + userDeviceId 匹配：前缀 "admin:phone-001:" → 推送给该设备的所有节点</li>
-	 *   <li>精确匹配：前缀 "admin:phone-001:pilot-app" → 仅推送给该节点</li>
-	 * </ul>
-	 * </p>
-	 *
-	 * @param keyPrefix Key 前缀，如 "admin:" 或 "admin:phone-001:"
-	 * @param message   JSON 格式的消息字符串
-	 * @return 实际成功推送的会话数
-	 */
-	public int broadcastByKeyPrefix(String keyPrefix, String message) {
-		if (sessionMap.isEmpty()) {
-			return 0;
-		}
-		TextMessage textMessage = new TextMessage(message);
-		int[] successCount = {0};
-		sessionMap.forEach((key, wsSession) -> {
-			if (key.startsWith(keyPrefix) && wsSession.getWebSocketSession().isOpen()) {
-				try {
-					wsSession.getWebSocketSession().sendMessage(textMessage);
-					successCount[0]++;
-				} catch (IOException e) {
-					log.warn("Failed to send WS message to session [{}]: {}", key, e.getMessage());
-				}
-			}
-		});
-		log.debug("Batch send by prefix [{}]: success={}/total={}", keyPrefix, successCount[0], sessionMap.size());
-		return successCount[0];
-	}
+    /**
+     * 向所有在线 WebSocket 客户端广播消息
+     *
+     * @param message JSON 格式的消息字符串
+     */
+    public void broadcastToAll(String message) {
+        if (sessionCache.estimatedSize() == 0) {
+            return;
+        }
+        TextMessage textMessage = new TextMessage(message);
+        sessionCache.asMap().forEach((sessionId, wsSession) -> {
+            WebSocketSession rawSession = wsSession.getWebSocketSession();
+            if (rawSession.isOpen()) {
+                try {
+                    rawSession.sendMessage(textMessage);
+                } catch (IOException e) {
+                    log.warn("Failed to send WS message to session [{}]: {}", sessionId, e.getMessage());
+                }
+            }
+        });
+    }
+
+    /**
+     * 按 sessionId 前缀批量推送消息
+     *
+     * @param keyPrefix sessionId 前缀
+     * @param message   JSON 格式的消息字符串
+     * @return 实际成功推送的会话数
+     */
+    public int broadcastByKeyPrefix(String keyPrefix, String message) {
+        if (sessionCache.estimatedSize() == 0) {
+            return 0;
+        }
+        TextMessage textMessage = new TextMessage(message);
+        int[] successCount = {0};
+        sessionCache.asMap().forEach((sessionId, wsSession) -> {
+            if (sessionId.startsWith(keyPrefix)) {
+                WebSocketSession rawSession = wsSession.getWebSocketSession();
+                if (rawSession.isOpen()) {
+                    try {
+                        rawSession.sendMessage(textMessage);
+                        successCount[0]++;
+                    } catch (IOException e) {
+                        log.warn("Failed to send WS message to session [{}]: {}", sessionId, e.getMessage());
+                    }
+                }
+            }
+        });
+        log.debug("Batch send by prefix [{}]: success={}/total={}", keyPrefix, successCount[0], sessionCache.estimatedSize());
+        return successCount[0];
+    }
+
+    /**
+     * 获取user的  redis session key
+     * @param userId
+     * @return
+     */
+    public String getRedisUserKey(String userId) {
+        return WS_ROUTER_PREFIX + userId;
+    }
 }
