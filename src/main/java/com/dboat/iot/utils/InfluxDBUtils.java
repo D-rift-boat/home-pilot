@@ -1,8 +1,10 @@
 package com.dboat.iot.utils;
 
+import com.dboat.iot.common.constants.InfluxMeasurementConst;
 import com.dboat.iot.config.InfluxDBConfig;
 import com.dboat.iot.entity.SensorData;
 import com.influxdb.client.*;
+import com.influxdb.client.domain.Query;
 import com.influxdb.client.domain.WritePrecision;
 import com.influxdb.client.write.Point;
 import com.influxdb.client.write.events.WriteErrorEvent;
@@ -15,7 +17,9 @@ import org.springframework.stereotype.Component;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @Component
 public class InfluxDBUtils {
@@ -99,27 +103,60 @@ public class InfluxDBUtils {
     /**
      * Query sensor data by device ID and time range
      */
-    public List<SensorData> querySensorData(String bucket, String deviceId, Instant start, Instant end) {
-        String flux = String.format(
-                "from(bucket: \"%s\") " +
-                "|> range(start: %s, stop: %s) " +
-                "|> filter(fn: (r) => r[\"_measurement\"] == \"%s\") " +
-                "|> filter(fn: (r) => r[\"device_id\"] == \"%s\") " +
-                "|> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")",
-                bucket, start.toString(), end.toString(), MEASUREMENT, deviceId
+    public List<SensorData> querySensorData(String bucket, String deviceId, Instant start, Instant end,String measurement) {
+        // 转义不可信输入 deviceId
+        String devSafe = fluxEscapeValue(deviceId);
+
+        String querySql = """
+            from(bucket:"%s")
+            |> range(start:%s, stop:%s)
+            |> filter(fn: (r) => r["_measurement"] == "%s")
+            |> filter(fn: (r) => r["device_id"] == "%s")
+            |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
+            """;
+        String fluxTemplate = String.format(querySql,
+                bucket, start.toString(), end.toString(), measurement, deviceId
         );
+        // 参数Map：所有外部输入全部放到这里，SDK做转义处理  只有cloud版 influxdb 支持
+        //Map<String, Object> params = new HashMap<>();
+        //params.put("bucket", bucket);
+        //params.put("measurement", measurement);
+        //params.put("deviceId", deviceId);
+        //params.put("start", start.toString());
+        //params.put("end", end.toString());
+        //
+        //QueryApi queryApi = influxDBClient.getQueryApi();
+        //Query query = new Query();
+        //query.setQuery(fluxTemplate);
+        // http请求body带上params json，服务端接收为params record
+        //query.setParams(params);
+        //List<FluxTable> tables = queryApi.query(query, org);
 
         QueryApi queryApi = influxDBClient.getQueryApi();
-        List<FluxTable> tables = queryApi.query(flux, org);
+        List<FluxTable> tables = queryApi.query(fluxTemplate, org);
+
 
         List<SensorData> result = new ArrayList<>();
         for (FluxTable table : tables) {
             for (FluxRecord record : table.getRecords()) {
-                SensorData data = mapRecordToSensorData(record, deviceId);
+                SensorData data = mapRecordToSensorDataByMea(record, deviceId, measurement);
                 result.add(data);
             }
         }
         return result;
+    }
+
+    /**
+     * Flux OSS 字符串字面量转义
+     * 用于filter里面的业务值：device_id、tag值，包裹在 "" 双引号内
+     * Flux语法：字符串内部 " 需要转义为 \"
+     */
+    public static String fluxEscapeValue(String raw) {
+        if (raw == null) {
+            return "";
+        }
+        // 核心：把 " 替换成 \"
+        return raw.replace("\"", "\\\"");
     }
 
     /**
@@ -147,6 +184,80 @@ public class InfluxDBUtils {
         }
         return null;
     }
+
+    /**
+     * Map FluxRecord to SensorData
+     * @param record flux返回记录
+     * @param deviceId 设备ID
+     * @param measurement 当前查询的measurement，区分原始/5min/1h/1d聚合
+     * @return SensorData，字段完全复用原有实体，不增删字段
+     */
+    private SensorData mapRecordToSensorDataByMea(FluxRecord record, String deviceId, String measurement) {
+        SensorData data = new SensorData();
+        data.setDeviceId(deviceId);
+        data.setReportTime(record.getTime());
+
+        boolean isAggMeasure = InfluxMeasurementConst.AGG_ENV_METRIC_5MIN.equals(measurement)
+                || InfluxMeasurementConst.AGG_ENV_METRIC_1H.equals(measurement)
+                || InfluxMeasurementConst.AGG_ENV_METRIC_1D.equals(measurement);
+
+        if (!isAggMeasure) {
+            // ========== 原始raw数据：读取原始字段 ==========
+            if (record.getValueByKey("temperature_aht") != null) {
+                data.setTemperatureAht(toBigDecimal(record.getValueByKey("temperature_aht")));
+            }
+            if (record.getValueByKey("temperature_bmp") != null) {
+                data.setTemperatureBmp(toBigDecimal(record.getValueByKey("temperature_bmp")));
+            }
+            if (record.getValueByKey("humidity") != null) {
+                data.setHumidity(toBigDecimal(record.getValueByKey("humidity")));
+            }
+            if (record.getValueByKey("pressure_hpa") != null) {
+                data.setPressureHpa(toBigDecimal(record.getValueByKey("pressure_hpa")));
+            }
+            if (record.getValueByKey("altitude_m") != null) {
+                data.setAltitudeM(toBigDecimal(record.getValueByKey("altitude_m")));
+            }
+            if (record.getValueByKey("sensor_status") != null) {
+                Object val = record.getValueByKey("sensor_status");
+                if(val instanceof Number){
+                    data.setSensorStatus(((Number) val).intValue());
+                }
+            }
+            if (record.getValueByKey("aht20_status") != null) {
+                Object val = record.getValueByKey("aht20_status");
+                if(val instanceof Number){
+                    data.setAht20Status(((Number) val).intValue());
+                }
+            }
+            if (record.getValueByKey("bmp280_status") != null) {
+                Object val = record.getValueByKey("bmp280_status");
+                if(val instanceof Number){
+                    data.setBmp280Status(((Number) val).intValue());
+                }
+            }
+        } else {
+            // ========== 聚合表 5min/1h/1d：读取 *_avg 平均值回填原有业务字段 ==========
+            if (record.getValueByKey("avg_temp_aht") != null) {
+                data.setTemperatureAht(toBigDecimal(record.getValueByKey("avg_temp_aht")));
+            }
+            if (record.getValueByKey("avg_temp_bmp") != null) {
+                data.setTemperatureBmp(toBigDecimal(record.getValueByKey("avg_temp_bmp")));
+            }
+            if (record.getValueByKey("avg_humidity") != null) {
+                data.setHumidity(toBigDecimal(record.getValueByKey("avg_humidity")));
+            }
+            if (record.getValueByKey("avg_pressure") != null) {
+                data.setPressureHpa(toBigDecimal(record.getValueByKey("avg_pressure")));
+            }
+            if (record.getValueByKey("avg_altitude_m") != null) {
+                data.setAltitudeM(toBigDecimal(record.getValueByKey("avg_altitude_m")));
+            }
+            // 聚合窗口不计算设备状态字段，保持实体默认null，不赋值
+        }
+        return data;
+    }
+
 
     /**
      * Map FluxRecord to SensorData
