@@ -162,12 +162,12 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
         WsSession wsSession = localWsSessionManager.getWsSession(session.getId());
         String userId = wsSession != null ? wsSession.getUserId() : null;
 
+        // 通过 LocalWsSessionManager 移除本地会话 + redisKey映射
+        localWsSessionManager.removeSession(session.getId());
         // 通过 WsSessionRoutingService 移除 Redis 路由条目
         if (userId != null) {
             wsSessionRoutingService.removeSession(userId, session.getId());
         }
-        // 通过 LocalWsSessionManager 移除本地会话 + redisKey映射
-        localWsSessionManager.removeSession(session.getId());
 
         // 用户下线 推送该用户在线设备数量变更
         if (userId != null) {

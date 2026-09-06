@@ -1,8 +1,14 @@
 package com.dboat.iot.service.ws;
 
+import com.dboat.iot.common.constants.RedisLuaConstants;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.ObjectUtils;
+import org.redisson.api.RBatch;
+import org.redisson.api.RScript;
+import org.redisson.api.RScriptAsync;
+import org.redisson.api.RedissonClient;
+import org.redisson.client.codec.StringCodec;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Component;
@@ -56,6 +62,9 @@ public class WsSessionRoutingService {
     @Resource
     private DefaultRedisScript<Long> hsetWithExpireScript;
 
+    @Resource
+    private RedissonClient redissonClient;
+
 
     // ==================== 会话写入 ====================
 
@@ -81,12 +90,21 @@ public class WsSessionRoutingService {
         // 写入hash会话元数据
         stringRedisTemplate.opsForHash().put(hashKey, sessionId, nodeId);
 
-        // 更新用户会话zset索引: member=sessionId score=过期时间戳ms
-        stringRedisTemplate.opsForZSet().add(userSesZsetKey, sessionId, expireTsMs);
-        // 更新全局在线用户zset索引: member=userId score=过期时间戳ms
-        stringRedisTemplate.opsForZSet().add(WS_ONLINE_USERS_KEY, userId, expireTsMs);
-        stringRedisTemplate.expire(userSesZsetKey, WS_ROUTER_TTL_SECONDS, TimeUnit.SECONDS);
-        stringRedisTemplate.expire(hashKey,WS_ROUTER_TTL_SECONDS, TimeUnit.SECONDS);
+        // 参数顺序：keys, ARGV1=score(long), ARGV2=member, ARGV3=ttlSeconds
+        stringRedisTemplate.execute(zaddWithExpireScript,
+                Collections.singletonList(userSesZsetKey),
+                String.valueOf(expireTsMs),             // ARGV[1] score zset分数
+                sessionId,                              // ARGV[2] member
+                String.valueOf(WS_ROUTER_TTL_SECONDS)   // ARGV[3] key ttl秒
+        );
+
+        // 更新全局在线用户zset索引
+        stringRedisTemplate.execute(zaddWithExpireScript,
+                Collections.singletonList(WS_ONLINE_USERS_KEY),
+                String.valueOf(expireTsMs),
+                userId,
+                String.valueOf(WS_ROUTER_TTL_SECONDS)
+        );
     }
 
     /**
@@ -132,8 +150,30 @@ public class WsSessionRoutingService {
         String userSesZsetKey = String.format(WS_USER_ONLINE_SESSION_PREFIX, userId);
 
         // 更新zset索引score（续期过期时间）
-        stringRedisTemplate.opsForZSet().add(userSesZsetKey, sessionId, expireTsMs);
-        stringRedisTemplate.opsForZSet().add(WS_ONLINE_USERS_KEY, userId, expireTsMs);
+        RBatch batch = redissonClient.createBatch();
+        RScriptAsync script = batch.getScript(StringCodec.INSTANCE);// 关键：指定StringCodec
+
+
+        // 第一个脚本：用户会话zset
+        script.evalAsync(
+                RScript.Mode.READ_WRITE,
+                RedisLuaConstants.LUA_ZADD_WITH_EXPIRE,
+                RScript.ReturnType.INTEGER,
+                Collections.singletonList(userSesZsetKey),
+                expireTsMs, sessionId, String.valueOf(WS_ROUTER_TTL_SECONDS)
+        );
+
+        // 第二个脚本：全局zset
+        script.evalAsync(
+                RScript.Mode.READ_WRITE,
+                RedisLuaConstants.LUA_ZADD_WITH_EXPIRE,
+                RScript.ReturnType.INTEGER,
+                Collections.singletonList(WS_ONLINE_USERS_KEY),
+                expireTsMs, userId, String.valueOf(WS_ROUTER_TTL_SECONDS)
+        );
+
+        // 一次性网络发送
+        batch.execute();
     }
 
     // ==================== 查询 ====================
