@@ -14,7 +14,7 @@ import java.io.IOException;
 import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
-import static com.dboat.iot.common.constants.WebSocketConstants.WS_ROUTER_PREFIX;
+import static com.dboat.iot.common.constants.WebSocketConstants.WS_USER_SESSION_PREFIX;
 
 /**
  * 本地 WebSocket 会话管理器
@@ -252,6 +252,6 @@ public class LocalWsSessionManager {
      * @return
      */
     public String getRedisUserKey(String userId) {
-        return WS_ROUTER_PREFIX + userId;
+        return  String.format(WS_USER_SESSION_PREFIX, userId);
     }
 }

@@ -88,7 +88,7 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
         String userId = "admin";
         String userDeviceId = "phone-001";
         String nodeId = nodeIdProvider.getLocalNodeId();
-        String redisKey = WS_ROUTER_PREFIX + userId;
+        String redisKey =  String.format(WS_USER_SESSION_PREFIX, userId);
 
         // 通过 LocalWsSessionManager 注册本地会话
         localWsSessionManager.addSession(session.getId(), session, userId);

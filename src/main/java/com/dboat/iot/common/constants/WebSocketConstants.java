@@ -12,9 +12,19 @@ public class WebSocketConstants {
 	public static final String PONG = "PONG";
 
 	/**
-	 * Redis 路由 Key 前缀：ws:session:{userId}
+	 * Redis 路由 Key 前缀：ws:session:{userId} hash
 	 */
-	public static final String WS_ROUTER_PREFIX = "ws:session:";
+	public static final String WS_USER_SESSION_PREFIX = "ws:user:ses:{%s}";
+
+	/**
+	 * Redis 路由 Key 前缀：ws:on:users	ZSET
+	 */
+	public static final String WS_ONLINE_USERS_KEY = "ws:on:users";
+
+	/**
+	 * Redis 路由 Key 前缀：ws:on:user:ses:{Uid}	ZSET  用户在线session 索引
+	 */
+	public static final String WS_USER_ONLINE_SESSION_PREFIX = "ws:on:user:ses:{%s}";
 
 	/**
 	 * Redis ws中继 Key 前缀：ws:relay:
@@ -22,9 +32,9 @@ public class WebSocketConstants {
 	public static final String WS_RELAY_PREFIX = "ws:relay:";
 
 	/**
-	 * Redis 路由 Key TTL：60秒（前端30s心跳，留2倍余量）
+	 * Redis 路由 Key TTL：60秒（前端15s心跳，留2倍余量）
 	 */
-	public static final long WS_ROUTER_TTL_SECONDS = 60;
+	public static final long WS_ROUTER_TTL_SECONDS = 50;
 
 	/**
 	 * WebSocket 心跳超时时间：60秒，心跳间隔是30秒  超时设为60s 必须大于心跳间隔时间

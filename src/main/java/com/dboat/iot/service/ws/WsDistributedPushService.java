@@ -14,6 +14,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -47,15 +48,13 @@ public class WsDistributedPushService {
         String payloadJson = (payload instanceof String) ? (String) payload : JSON.toJSONString(payload);
 
         // 1.查询该用户在哪些节点有WS连接（从WS路由表获取）
-        Map<String, JSONObject> sessionNodeMap = wsSessionRoutingService.getUserSessionNodeMap(userId);
+        Map<String, String> sessionNodeMap = wsSessionRoutingService.getUserSessionNodeMap(userId);
         if (ObjectUtils.isEmpty(sessionNodeMap)) {
             log.debug("user {} has no online ws connections", userId);
             return;
         }
 
-        Set<String> targetNodes = sessionNodeMap.values().stream()
-                .map(json -> json.getString("nodeId"))
-                .collect(Collectors.toSet());
+        Set<String> targetNodes =  new HashSet<>(sessionNodeMap.values());
         WsRelayMessageDTO relayMsg = WsRelayMessageDTO.builder()
                 .userId(userId)
                 .msgType(msgType)
