@@ -86,7 +86,7 @@ public class TimeJob {
 	 * - 字段存在 → 连接正常，跳过
 	 * </p>
 	 */
-	@Scheduled(fixedRate = 15_000)
+	@Scheduled(fixedRate = 30_000)
 	public void inspectTimeoutRedisSessions() {
 		RLock lock = redissonClient.getLock(INSPECTOR_LOCK_KEY);
 

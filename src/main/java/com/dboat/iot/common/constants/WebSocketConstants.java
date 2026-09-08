@@ -34,7 +34,7 @@ public class WebSocketConstants {
 	/**
 	 * Redis 路由 Key TTL：60秒（前端15s心跳，留2倍余量）
 	 */
-	public static final long WS_ROUTER_TTL_SECONDS = 50;
+	public static final long WS_ROUTER_TTL_SECONDS = 45;
 
 	/**
 	 * WebSocket 心跳超时时间：60秒，心跳间隔是30秒  超时设为60s 必须大于心跳间隔时间
