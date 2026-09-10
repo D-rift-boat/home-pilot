@@ -18,11 +18,6 @@ public final class RedisConstants {
     public static final String DEVICE_LATEST_PREFIX = "ws:iot_device:latest:";
 
     /**
-     * 用户在线设备总数 Key 前缀：ws:stat:online_user_device_count:{userId}
-     */
-    public static final String USER_ONLINE_COUNT_PREFIX = "ws:stat:online_user_device_count:";
-
-    /**
      * 在线 IoT 设备总数 Key 前缀：ws:stat:online_iot_device_count:{userId}
      */
     public static final String IOT_ONLINE_COUNT_PREFIX = "ws:stat:online_iot_device_count:";

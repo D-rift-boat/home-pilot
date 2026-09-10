@@ -90,13 +90,6 @@ public class DeviceStateService {
     }
 
     /**
-     * 构建用户在线设备总数 Key：ws:stat:online_user_device_count:{userId}
-     */
-    private String buildUserOnlineCountKey(String userId) {
-        return USER_ONLINE_COUNT_PREFIX + userId;
-    }
-
-    /**
      * 构建用户在线 IoT 设备总数 Key：ws:stat:online_iot_device_count:{userId}
      */
     private String buildIotOnlineCountKey(String userId) {
@@ -320,20 +313,6 @@ public class DeviceStateService {
         return raw;
     }
 
-
-    /**
-     * 设备离线：删除最新数据 Key + DECR 在线数
-     * 在线设备数量 -1
-     *
-     * @param userId 用户ID
-     * @return true=成功删除（设备确实离线），false=Key 已不存在
-     */
-    public boolean userDeviceOffline(String userId) {
-        decrementOnlineUserDevCount(userId);
-        log.info("Device offline, DECR online count: {}", userId);
-        return true;
-    }
-
     /**
      * IoT 设备离线：从所有订阅用户的在线列表中移除该设备
      * <p>
@@ -397,14 +376,6 @@ public class DeviceStateService {
     }
 
     /**
-     * 用户在线设备数 +1（原子操作）
-     */
-    public Long incrementOnlineUserDevCount(String userId) {
-        Long count = stringRedisTemplate.opsForValue().increment(buildUserOnlineCountKey(userId));
-        return count == null ? 1 : count;
-    }
-
-    /**
      * 删除用户在线设备列表中的指定设备
      */
     public Long offlineUserIotDev(String userId, String iotDeviceId) {
@@ -450,23 +421,6 @@ public class DeviceStateService {
         //
 
         return remainCount;
-    }
-
-    /**
-     * 在线设备数 -1（原子操作，保证不低于 0）
-     */
-    public Long decrementOnlineUserDevCount(String userId) {
-        String countKey = buildUserOnlineCountKey(userId);
-        Long count = stringRedisTemplate.execute(decrScript, Collections.singletonList(countKey));
-        Long result = count == null ? 0 : count;
-
-        // 递减后如果为0，可以触发推送"设备全部离线"事件
-        if (result == 0) {
-            log.info("All devices offline for user: {}", userId);
-            // pushAllOfflineEvent(userId);
-        }
-
-        return result;
     }
 
     /**

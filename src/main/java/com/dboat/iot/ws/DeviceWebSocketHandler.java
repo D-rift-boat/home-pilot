@@ -1,5 +1,6 @@
 package com.dboat.iot.ws;
 
+import com.alibaba.fastjson2.JSONObject;
 import com.dboat.iot.config.generator.NodeIdProvider;
 import com.dboat.iot.dto.ws.WsUploadDataDTO;
 import com.dboat.iot.enums.WsTypeEnum;
@@ -88,13 +89,16 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
         String userId = "admin";
         String userDeviceId = "phone-001";
         String nodeId = nodeIdProvider.getLocalNodeId();
-        String redisKey =  String.format(WS_USER_SESSION_PREFIX, userId);
+        long nowTs = System.currentTimeMillis();
 
         // 通过 LocalWsSessionManager 注册本地会话
         localWsSessionManager.addSession(session.getId(), session, userId);
 
         // 通过 WsSessionRoutingService 写入 Redis 路由表（TTL 60s）
-        wsSessionRoutingService.addSession(userId, session.getId(), nodeId);
+        JSONObject json = new JSONObject();
+        json.put("nodeId", nodeId);
+        json.put("actiTs", nowTs);
+        wsSessionRoutingService.addSession(userId, session.getId(), json.toJSONString());
 
         // 用户上线 ws通知用户在线设备数量
         Long userDeviceOnlineCount = wsSessionRoutingService.getUserSessionCount(userId);
@@ -161,12 +165,13 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
         // 先提取 userId，用于后续用户级推送
         WsSession wsSession = localWsSessionManager.getWsSession(session.getId());
         String userId = wsSession != null ? wsSession.getUserId() : null;
+        String nodeId = nodeIdProvider.getLocalNodeId();
 
         // 通过 LocalWsSessionManager 移除本地会话 + redisKey映射
         localWsSessionManager.removeSession(session.getId());
         // 通过 WsSessionRoutingService 移除 Redis 路由条目
         if (userId != null) {
-            wsSessionRoutingService.removeSession(userId, session.getId());
+            wsSessionRoutingService.removeSession(userId, session.getId(), nodeId);
         }
 
         // 用户下线 推送该用户在线设备数量变更

@@ -16,15 +16,13 @@ import org.apache.commons.lang3.ObjectUtils;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.data.redis.core.Cursor;
-import org.springframework.data.redis.core.RedisTemplate;
-import org.springframework.data.redis.core.ScanOptions;
-import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.*;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -74,8 +72,14 @@ public class TimeJob {
 	private StringRedisTemplate stringRedisTemplate;
 
 	// Lua脚本
+	//@Resource
+	//private DefaultRedisScript<Long> checkZsetEmptyOnlyDelHashScript;
+
 	@Resource
-	private DefaultRedisScript<Long> checkZsetEmptyOnlyDelHashScript;
+	private DefaultRedisScript<Long> hashCleanExpiredSessionScript;
+	
+	@Resource
+	private DefaultRedisScript<List> cleanExpiredUserConnScript;
 
 	/**
 	 * 定时检查并清理过期的 Redis ws会话（每 15 秒执行一次,redis 会话过期时间 50s 僵尸会话最大存在65s）
@@ -86,7 +90,7 @@ public class TimeJob {
 	 * - 字段存在 → 连接正常，跳过
 	 * </p>
 	 */
-	@Scheduled(fixedRate = 30_000)
+	@Scheduled(fixedRate = 45_000)
 	public void inspectTimeoutRedisSessions() {
 		RLock lock = redissonClient.getLock(INSPECTOR_LOCK_KEY);
 
@@ -101,8 +105,6 @@ public class TimeJob {
 			try {
 				// 拿到锁，执行巡检
 				long cleanedSessionCount = doRedisWsInspect();
-				log.info("ws会话定时巡检完成，本次清理僵尸会话数量:{}", cleanedSessionCount);
-
 			} catch (Exception e) {
 				log.error("Error occurred during Redis session inspection", e);
 			}
@@ -133,54 +135,50 @@ public class TimeJob {
 		long totalClean = 0L;
 
 		//1. 全局在线用户zset：取出所有已经过期的uid（score < nowMs）
-		Set<String> expireUidSet = stringRedisTemplate.opsForZSet().rangeByScore(WS_ONLINE_USERS_KEY, 0, nowMs);
+		Set<String> expireUidSet = stringRedisTemplate.opsForZSet().rangeByScore(WS_ONLINE_ALL_CONN_KEY, 0, nowMs);
 		if (ObjectUtils.isEmpty(expireUidSet)) {
 			return 0L;
 		}
 
+		// 全局在线用户索引 不用删除 ，删除容易出现并发竞态问题
 		for (String uid : expireUidSet) {
-			String userSesZsetKey = String.format(WS_USER_ONLINE_SESSION_PREFIX, uid);
-			String userHashKey = String.format(WS_USER_SESSION_PREFIX, uid);
-
+			String userConnZsetKey = String.format(WS_USER_ONLINE_CONN_PREFIX, uid);
 			//2. 获取该用户zset里面所有过期sessionId
-			Set<String> expireSessionIds = stringRedisTemplate.opsForZSet().rangeByScore(userSesZsetKey, 0, nowMs);
-			if (ObjectUtils.isEmpty(expireSessionIds)) {
-				continue;
-			}
-			long cleanCnt = expireSessionIds.size();
+			List<Object> cleanConnRes = stringRedisTemplate.execute(cleanExpiredUserConnScript,
+					List.of(userConnZsetKey),
+					String.valueOf(nowMs)
+			);
+			List connList = (List) cleanConnRes.get(0);
+			Integer cleanConnCount = Integer.valueOf(cleanConnRes.get(1).toString());
+			long cleanCnt = connList.size();
 			totalClean += cleanCnt;
 
-			//3. hash批量删除过期session field
-			stringRedisTemplate.opsForHash().delete(userHashKey, expireSessionIds.toArray());
-
-			//4. 直接zrem删除本次拿到的明确sessionId
-			stringRedisTemplate.opsForZSet().remove(userSesZsetKey, expireSessionIds.toArray());
-
-			//5. 判断用户是否彻底没有在线会话,没有则删除整个hash
-			long UserOnlineCount = checkZsetEmptyOnlyDeleteHash(userSesZsetKey, userHashKey);
-			//清理 在线状态
-			if (UserOnlineCount == 0L){
-				stringRedisTemplate.opsForZSet().remove(WS_ONLINE_USERS_KEY,uid);
+			//3. 批量删除过期session string  批量执行  删不掉也无所谓 ex 到期会自动清除
+			if (!connList.isEmpty()) {
+				stringRedisTemplate.executePipelined((RedisCallback<Object>) connection -> {
+					for (Object sid : connList) {
+						byte[] rawKey = (WS_CONN_PREFIX + sid).getBytes(StandardCharsets.UTF_8);
+						connection.del(rawKey);
+					}
+					return null;
+				});
 			}
-
-			wsPushService.pushToUser(uid, WS_USER_ONLINE_SESSION_PREFIX, UserOnlineCount);
+			if (cleanConnCount > 0){
+				WsUploadDataDTO wsUploadDataDTO = new WsUploadDataDTO();
+				wsUploadDataDTO.setType("USER_DEVICE_ONLINE_COUNT");
+				WsUploadDataDTO.DataDTO dataDTO = new WsUploadDataDTO.DataDTO();
+				WsUploadDataDTO.DeviceDTO deviceDTO = new WsUploadDataDTO.DeviceDTO();
+				deviceDTO.setDeviceId("web-001");
+				dataDTO.setUserDeviceOnlineCount(Integer.valueOf(String.valueOf(cleanConnCount)));
+				wsUploadDataDTO.setData((dataDTO));
+				wsUploadDataDTO.setDevice(deviceDTO);
+				wsUploadDataDTO.setData((dataDTO));
+				wsPushService.pushToUser(uid, WS_USER_ONLINE_CONN_PREFIX, wsUploadDataDTO);
+			}
 
 		}
 		log.info("ws会话巡检执行完成，本次清理僵尸会话数量:{}", totalClean);
 		return totalClean;
-	}
-
-	/**
-	 * 原子判断zset为空，仅删除hash；zset/全局索引交给TTL自动过期
-	 * @param userSesZsetKey 用户会话zset key
-	 * @param userHashKey 用户会话hash key
-	 * @return 1=zset为空，hash已删除；0=zset还有会话，跳过
-	 */
-	public long checkZsetEmptyOnlyDeleteHash(String userSesZsetKey, String userHashKey) {
-		return stringRedisTemplate.execute(
-				checkZsetEmptyOnlyDelHashScript,
-				List.of(userSesZsetKey, userHashKey)
-		);
 	}
 
 

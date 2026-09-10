@@ -5,6 +5,9 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 
+import java.util.List;
+import java.util.Set;
+
 /**
  * Redis Lua 脚本配置类
  */
@@ -49,4 +52,70 @@ public class RedisLuaScriptConfig {
         script.setResultType(Long.class);
         return script;
     }
+
+    /**
+     * 创建一个 Redis 脚本，用于检查有序集合是否为空，如果为空则删除关联的哈希表
+     *
+     * @return DefaultRedisScript<Long>
+     */
+    @Bean
+    public DefaultRedisScript<Long> checkZsetEmptyDelZsetScript() {
+        DefaultRedisScript<Long> script = new DefaultRedisScript<>();
+        script.setScriptText(RedisLuaConstants.CHECK_ZSET_EMPTY_DEL_ZSET_LUA);
+        script.setResultType(Long.class);
+        return script;
+    }
+
+    /**
+     * 创建一个 Redis 脚本，删除hash、zset
+     *
+     * @return DefaultRedisScript<Long>
+     */
+    @Bean
+    public DefaultRedisScript<Long> removeSessionScript() {
+        DefaultRedisScript<Long> script = new DefaultRedisScript<>();
+        script.setScriptText(RedisLuaConstants.LUA_REMOVE_SESSION);
+        script.setResultType(Long.class);
+        return script;
+    }
+
+    /**
+     * 创建一个 Redis 脚本，清除hash 中过期数据
+     *
+     * @return DefaultRedisScript<Long>
+     */
+    @Bean
+    public DefaultRedisScript<Long> hashCleanExpiredSessionScript() {
+        DefaultRedisScript<Long> script = new DefaultRedisScript<>();
+        script.setScriptText(RedisLuaConstants.LUA_HASH_CLEAN_EXPIRED_SESSION);
+        script.setResultType(Long.class);
+        return script;
+    }
+
+    /**
+     * 创建一个 Redis 脚本，清除user zset中的 过期连接
+     *
+     * @return DefaultRedisScript<Long>
+     */
+    @Bean
+    public DefaultRedisScript<List> cleanExpiredUserConnScript() {
+        DefaultRedisScript<List> script = new DefaultRedisScript<>();
+        script.setScriptText(RedisLuaConstants.CLEAN_EX_USER_CONN_LUA);
+        script.setResultType(List.class);
+        return script;
+    }
+
+    /**
+     * 创建一个 Redis 脚本，如果成员过期 则删除
+     *
+     * @return DefaultRedisScript<Long>
+     */
+    @Bean
+    public DefaultRedisScript<Long> zremIfMemExScript() {
+        DefaultRedisScript<Long> script = new DefaultRedisScript<>();
+        script.setScriptText(RedisLuaConstants.ZREM_IF_MEM_EX_LUA);
+        script.setResultType(Long.class);
+        return script;
+    }
+
 }
