@@ -1,11 +1,9 @@
 package com.dboat.iot.service.ws;
 
 import com.alibaba.fastjson2.JSONObject;
-import com.alibaba.fastjson2.TypeReference;
 import com.dboat.iot.common.constants.RedisLuaConstants;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.lang3.ObjectUtils;
 import org.redisson.api.RBatch;
 import org.redisson.api.RScript;
 import org.redisson.api.RScriptAsync;
@@ -60,15 +58,6 @@ public class WsSessionRoutingService {
 
     @Resource
     private DefaultRedisScript<Long> zaddWithExpireScript;
-
-    @Resource
-    private DefaultRedisScript<Long> hsetWithExpireScript;
-
-    @Resource
-    private DefaultRedisScript<Long> removeSessionScript;
-
-    @Resource
-    private DefaultRedisScript<Long> checkZsetEmptyDelZsetScript;
 
     @Resource
     private RedissonClient redissonClient;

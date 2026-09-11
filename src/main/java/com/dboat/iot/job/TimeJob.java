@@ -7,9 +7,6 @@ import com.dboat.iot.enums.WsTypeEnum;
 import com.dboat.iot.service.UserDeviceRelService;
 import com.dboat.iot.service.ws.WsDistributedPushService;
 import com.dboat.iot.service.ws.DeviceStateService;
-import com.dboat.iot.service.ws.WsSessionRoutingService;
-import com.dboat.iot.ws.LocalWsSessionManager;
-import com.dboat.iot.ws.WsSession;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.ObjectUtils;
@@ -20,7 +17,6 @@ import org.springframework.data.redis.core.*;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
-import org.springframework.web.socket.CloseStatus;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
@@ -48,14 +44,7 @@ public class TimeJob {
 	private RedisTemplate<String, Object> redisTemplate;
 
 	@Resource
-	private LocalWsSessionManager localWsSessionManager;
-
-	@Resource
 	private DeviceStateService deviceStateService;
-
-	/** WS 会话路由存储，管理 Redis 路由表操作 */
-	@Resource
-	private WsSessionRoutingService wsSessionRoutingService;
 
 	/** WS 分布式推送服务，用户级精准推送 */
 	@Resource
@@ -75,8 +64,8 @@ public class TimeJob {
 	//@Resource
 	//private DefaultRedisScript<Long> checkZsetEmptyOnlyDelHashScript;
 
-	@Resource
-	private DefaultRedisScript<Long> hashCleanExpiredSessionScript;
+	//@Resource
+	//private DefaultRedisScript<Long> hashCleanExpiredSessionScript;
 	
 	@Resource
 	private DefaultRedisScript<List> cleanExpiredUserConnScript;
