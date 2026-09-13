@@ -21,4 +21,23 @@
         role_name,remark,status,
         create_time,update_time,delete_time
     </sql>
+
+    <!--
+        查询用户在租户内拥有的全部启用角色
+        链路：user_role → role
+        过滤：两表软删除 delete_time IS NULL，且角色 status=1（启用）
+    -->
+    <select id="selectRolesByUserId" resultMap="BaseResultMap">
+        SELECT r.role_id, r.org_id, r.role_code,
+               r.role_name, r.remark, r.status,
+               r.create_time, r.update_time, r.delete_time
+        FROM role r
+        INNER JOIN user_role ur ON ur.role_id = r.role_id AND ur.org_id = r.org_id
+        WHERE r.org_id = #{orgId}
+          AND ur.user_id = #{userId}
+          AND r.status = 1
+          AND r.delete_time IS NULL
+          AND ur.delete_time IS NULL
+        ORDER BY r.role_code
+    </select>
 </mapper>

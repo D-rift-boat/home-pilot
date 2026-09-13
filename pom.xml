@@ -24,6 +24,7 @@
         <influxdb.client.version>6.12.0</influxdb.client.version>
         <fastjson2.version>2.0.32</fastjson2.version>
         <springdoc.version>2.5.0</springdoc.version>
+        <jjwt.version>0.12.5</jjwt.version>
     </properties>
 
     <dependencies>
@@ -56,6 +57,31 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-aop</artifactId>
+        </dependency>
+
+        <!-- Spring Security（认证鉴权框架：过滤器链、BCrypt 密码编码、方法级权限注解） -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security</artifactId>
+        </dependency>
+
+        <!-- JJWT：Access Token 签发与验签（RS256 非对称签名） -->
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-api</artifactId>
+            <version>${jjwt.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-impl</artifactId>
+            <version>${jjwt.version}</version>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-jackson</artifactId>
+            <version>${jjwt.version}</version>
+            <scope>runtime</scope>
         </dependency>
 
         <!-- MyBatis-Plus (Spring Boot 3.x) -->

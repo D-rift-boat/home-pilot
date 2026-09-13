@@ -85,8 +85,10 @@ kafka:
 
 # MyBatis-Plus
 mybatis-plus:
-  mapper-locations: classpath:mapper/*.xml
-  type-aliases-package: com.dboat.iot.entity
+  # 多模块 Mapper XML：iot 与 user 子目录均需加载，故使用 classpath*: + ** 通配
+  mapper-locations: classpath*:mapper/**/*.xml
+  # 实体别名扫描包（IoT 设备域 + 用户认证域）
+  type-aliases-package: com.dboat.iot.entity,com.dboat.user.entity
   configuration:
     log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
     map-underscore-to-camel-case: true
@@ -140,11 +142,15 @@ springdoc:
 logging:
   level:
     com.dboat.iot: DEBUG
+    com.dboat.user: DEBUG
     org.eclipse.paho: INFO
     # Kafka客户端日志降噪，避免大量心跳/拉取日志刷屏（问题排查时可临时调为INFO）
     org.apache.kafka: WARN
+    # Spring Security 日志降噪（排查鉴权问题时可临时调为 DEBUG）
+    org.springframework.security: INFO
     # 打印mapper接口所在包日志，会输出：执行SQL、参数、返回条数
     com.dboat.iot.mapper: DEBUG
+    com.dboat.user.mapper: DEBUG
     # 核心：mybatis底层日志，展示完整SQL语句
     org.mybatis: DEBUG
 
@@ -167,3 +173,66 @@ thread-pool:
     max-size: 12
     queue-capacity: 300
     keep-alive-seconds: 60
+
+
+# ========== 认证鉴权体系配置（双令牌 + RBAC + 多租户） ==========
+auth:
+  jwt:
+    # 签发方标识，验签时会校验 iss 必须一致
+    issuer: home-pilot
+    # Access Token 有效期（秒）—— 无状态 JWT，建议 30min~2h
+    access-token-ttl-seconds: 7200
+    # Refresh Token 有效期（秒）—— Redis 有状态，可撤销可轮换，默认 7 天
+    refresh-token-ttl-seconds: 604800
+    # 签名算法固定 RS256，密钥长度 2048
+    rsa-key-size: 2048
+    # RSA 私钥（PKCS#8 PEM，可多行）。为空则启动时生成临时密钥对，仅适用于开发环境
+    # 生产环境必须配置固定密钥，否则重启后已签发的 Access Token 全部失效
+    private-key:
+    # RSA 公钥（X.509 PEM）。为空时从私钥/临时密钥对中推导
+    public-key:
+  login:
+    # 连续密码错误次数阈值，达到后锁定账号
+    max-fail-count: 5
+    # 账号锁定时长（分钟）
+    lock-minutes: 10
+    # 单用户最大并发会话数，超限踢掉最早登录的会话
+    max-sessions: 5
+    # 登录成功后是否要求首次登录强制改密（user.first_login=1）
+    force-change-password-on-first-login: true
+  captcha:
+    # 验证码长度
+    length: 6
+    # 验证码有效期（秒）
+    ttl-seconds: 300
+    # 同一目标发送间隔（秒），防刷
+    send-interval-seconds: 60
+    # 模拟发送开关：true 时验证码直接写入日志并在接口响应中返回（仅限开发环境）
+    mock-enabled: true
+  rate-limit:
+    # 认证接口限流开关
+    enabled: true
+    # 统计窗口（秒）
+    window-seconds: 60
+    # 单 IP 在窗口内允许的最大请求数
+    max-requests: 30
+  cache:
+    # 角色/权限集合缓存有效期（秒），权限变更时主动失效
+    perm-ttl-seconds: 1800
+    # 令牌版本号缓存有效期（秒）
+    token-version-ttl-seconds: 300
+  security:
+    # 免认证白名单路径（设备侧回调、WebSocket、文档、认证入口）
+    permit-all-paths:
+      - /api/auth/login
+      - /api/auth/register
+      - /api/auth/refresh
+      - /api/auth/captcha/send
+      - /api/emqx/**
+      - /ws
+      - /ws/**
+      - /swagger-ui.html
+      - /swagger-ui/**
+      - /v3/api-docs/**
+      - /doc.html
+      - /error

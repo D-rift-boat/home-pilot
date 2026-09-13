@@ -56,7 +56,7 @@ public class IotDevConsumer {
 	private MqttMessageHandler mqttMessageHandler;
 
 
-	@Value("${kafka.topic.iot-device-status-topic}")
+	@Value("${" + KafkaTopicConstants.IOT_DEVICE_STATUS_TOPIC + "}")
 	private String iotDeviceStatusTopic;
 
 	/**

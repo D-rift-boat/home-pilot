@@ -2,6 +2,9 @@ package com.dboat.user.mapper;
 
 import com.dboat.user.entity.Role;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import org.apache.ibatis.annotations.Param;
+
+import java.util.List;
 
 /**
 * @author tanghj
@@ -11,6 +14,15 @@ import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 */
 public interface RoleMapper extends BaseMapper<Role> {
 
+    /**
+     * 查询指定用户在租户内拥有的全部启用角色
+     * <p>关联 user_role，自动过滤软删除记录与禁用角色。</p>
+     *
+     * @param orgId  租户ID
+     * @param userId 用户ID
+     * @return 角色列表
+     */
+    List<Role> selectRolesByUserId(@Param("orgId") String orgId, @Param("userId") String userId);
 }
 
 

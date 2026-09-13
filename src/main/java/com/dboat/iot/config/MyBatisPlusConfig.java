@@ -12,7 +12,7 @@ import org.springframework.context.annotation.Configuration;
  * <p>
  * 配置 MyBatis-Plus 核心功能：
  * <ul>
- *   <li>Mapper 接口扫描：自动扫描 com.dboat.iot.mapper 包下的 Mapper 接口</li>
+ *   <li>Mapper 接口扫描：自动扫描 com.dboat.iot.mapper（IoT 设备域）与 com.dboat.user.mapper（用户认证域）两个包下的 Mapper 接口</li>
  *   <li>分页插件：注册 MySQL 分页拦截器，支持 IPage 分页查询</li>
  * </ul>
  * </p>
@@ -20,7 +20,7 @@ import org.springframework.context.annotation.Configuration;
  * @author dboat
  */
 @Configuration
-@MapperScan("com.dboat.iot.mapper")
+@MapperScan({"com.dboat.iot.mapper", "com.dboat.user.mapper"})
 public class MyBatisPlusConfig {
 
     /**

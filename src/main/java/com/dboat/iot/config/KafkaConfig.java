@@ -30,7 +30,7 @@ import org.springframework.util.backoff.FixedBackOff;
 public class KafkaConfig {
 
     /** 传感器遥测数据 Topic 名称 */
-    @Value("${kafka.topic.telemetry-data-topic}")
+    @Value("${kafka.topic.telemetry-data}")
     private String telemetryTopic;
 
     /** 消费失败死信 Topic 名称 */

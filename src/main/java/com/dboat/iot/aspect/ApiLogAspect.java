@@ -12,6 +12,8 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
+import java.util.regex.Pattern;
+
 /**
  * API 接口日志切面
  * <p>
@@ -23,6 +25,10 @@ import org.springframework.web.context.request.ServletRequestAttributes;
  * </ul>
  * 用于接口调用追踪、性能监控和问题排查。
  * </p>
+ * <p>
+ * 安全约束：登录/注册等认证接口的密码、令牌、验证码等敏感字段在输出前统一脱敏，
+ * 避免明文凭证落盘到日志文件。
+ * </p>
  *
  * @author dboat
  */
@@ -33,9 +39,19 @@ public class ApiLogAspect {
     private static final Logger log = LoggerFactory.getLogger(ApiLogAspect.class);
 
     /**
-     * 定义切点：拦截 api 包下所有类的所有公共方法
+     * 敏感字段脱敏正则：匹配 JSON 中的 password / token / credential / code 等字段值
      */
-    @Pointcut("execution(* com.dboat.iot.api.*.*(..))")
+    private static final Pattern SENSITIVE_PATTERN = Pattern.compile(
+            "(\"(?:password|oldPassword|newPassword|confirmPassword|credential|accessToken|refreshToken|sign|code)\"\\s*:\\s*)\"[^\"]*\"",
+            Pattern.CASE_INSENSITIVE);
+
+    /** 敏感字段脱敏后的占位值 */
+    private static final String MASKED_VALUE = "\"******\"";
+
+    /**
+     * 定义切点：拦截 iot 与 user 两个模块 api 包下所有类的所有公共方法
+     */
+    @Pointcut("execution(* com.dboat.iot.api.*.*(..)) || execution(* com.dboat.user.api.*.*(..))")
     public void apiPointcut() {}
 
     /**
@@ -78,10 +94,23 @@ public class ApiLogAspect {
 
         // 记录响应日志（含耗时）
         long elapsed = System.currentTimeMillis() - startTime;
-        String response = JsonUtils.toJSONString(result);
+        String response = maskSensitive(JsonUtils.toJSONString(result));
         log.info("[API] {} {} | Response: {} | Elapsed: {}ms", method, url, response, elapsed);
 
         return result;
+    }
+
+    /**
+     * 对 JSON 字符串中的敏感字段值进行脱敏
+     *
+     * @param json 原始 JSON 字符串
+     * @return 脱敏后的 JSON 字符串
+     */
+    private String maskSensitive(String json) {
+        if (json == null || json.isEmpty()) {
+            return json;
+        }
+        return SENSITIVE_PATTERN.matcher(json).replaceAll("$1" + MASKED_VALUE);
     }
 
     /**
@@ -103,7 +132,7 @@ public class ApiLogAspect {
                 if (args[i] instanceof HttpServletRequest) {
                     sb.append("HttpServletRequest");
                 } else {
-                    sb.append(JsonUtils.toJSONString(args[i]));
+                    sb.append(maskSensitive(JsonUtils.toJSONString(args[i])));
                 }
             } catch (Exception e) {
                 sb.append(args[i].toString());

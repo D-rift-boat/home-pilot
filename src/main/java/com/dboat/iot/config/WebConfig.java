@@ -2,6 +2,8 @@ package com.dboat.iot.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import org.springframework.web.filter.CorsFilter;
@@ -29,10 +31,17 @@ public class WebConfig {
      *   <li>预检请求缓存 3600 秒（1 小时），减少 OPTIONS 请求次数</li>
      * </ul>
      * </p>
+     * <p>
+     * <b>顺序要求</b>：必须置于最高优先级，早于 Spring Security 过滤器链（order=-100）执行。
+     * 否则未携带令牌的跨域预检请求会先被安全链拦截返回 401，浏览器因拿不到
+     * CORS 响应头而判定跨域失败。同时 Spring Security 侧已关闭自带的 cors 处理，
+     * 由本过滤器独占 CORS 响应头写入，避免同名响应头重复导致浏览器拒绝。
+     * </p>
      *
      * @return CorsFilter 跨域过滤器实例
      */
     @Bean
+    @Order(Ordered.HIGHEST_PRECEDENCE)
     public CorsFilter corsFilter() {
         CorsConfiguration config = new CorsConfiguration();
         // 允许携带 Cookie 等凭证信息

@@ -336,3 +336,86 @@ CREATE TABLE sys_audit_log (
                                KEY idx_uid_time (user_id, create_time),
                                KEY idx_org_time (org_id, create_time)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='系统操作审计日志表';
+
+
+-- =============================================
+-- RBAC 权限种子数据
+-- 权限编码必须与 com.dboat.user.common.constants.AuthConstants 中的 PERM_* 常量严格一致，
+-- 否则 @PreAuthorize("hasAuthority('iot:device:read')") 永远为 false
+-- 说明：
+-- 1. permission 是全局字典表（无 org_id），所有租户共用同一份权限定义
+-- 2. perm_id 采用可读固定值而非 UUID，保证脚本可重复执行（幂等），且父子层级可直接引用
+-- 3. 权限树两级：菜单级(perm_type=1)仅供前端导航分组，接口级(perm_type=2)才是后端鉴权判定依据
+-- 4. ADMIN 角色无需写 role_perm——UserAuthorityServiceImpl 对 ADMIN 直接映射全量启用权限；
+--    OPERATOR / VIEWER 必须写 role_perm，否则注册出来就是"零权限"空角色
+-- =============================================
+
+-- ----------------------------
+-- 菜单级父权限 / Menu-level permissions
+-- ----------------------------
+INSERT INTO `permission` (`perm_id`, `perm_code`, `perm_name`, `perm_type`, `parent_perm_id`, `sort_num`, `status`, `create_time`, `update_time`)
+VALUES
+    ('perm_menu_dashboard', 'iot:dashboard', '实时看板', 1, NULL, 10, 1, NOW(), NOW()),
+    ('perm_menu_device',    'iot:device',    '设备管理', 1, NULL, 20, 1, NOW(), NOW()),
+    ('perm_menu_command',   'iot:command',   '指令控制', 1, NULL, 30, 1, NOW(), NOW()),
+    ('perm_menu_sensor',    'iot:sensor',    '传感数据', 1, NULL, 40, 1, NOW(), NOW()),
+    ('perm_menu_group',     'iot:group',     '设备分组', 1, NULL, 50, 1, NOW(), NOW()),
+    ('perm_menu_system',    'iot:system',    '系统管理', 1, NULL, 90, 1, NOW(), NOW())
+ON DUPLICATE KEY UPDATE
+    `perm_name`   = VALUES(`perm_name`),
+    `perm_type`   = VALUES(`perm_type`),
+    `parent_perm_id` = VALUES(`parent_perm_id`),
+    `sort_num`    = VALUES(`sort_num`),
+    `status`      = VALUES(`status`),
+    `delete_time` = NULL,
+    `update_time` = NOW();
+
+-- ----------------------------
+-- 接口级子权限 / API-level permissions（鉴权判定实际使用的编码）
+-- ----------------------------
+INSERT INTO `permission` (`perm_id`, `perm_code`, `perm_name`, `perm_type`, `parent_perm_id`, `sort_num`, `status`, `create_time`, `update_time`)
+VALUES
+    ('perm_api_dashboard_read', 'iot:dashboard:read', '看板查看',     2, 'perm_menu_dashboard', 11, 1, NOW(), NOW()),
+    ('perm_api_device_read',    'iot:device:read',    '设备查看',     2, 'perm_menu_device',    21, 1, NOW(), NOW()),
+    ('perm_api_device_write',   'iot:device:write',   '设备增改删',   2, 'perm_menu_device',    22, 1, NOW(), NOW()),
+    ('perm_api_command_send',   'iot:command:send',   '指令下发',     2, 'perm_menu_command',   31, 1, NOW(), NOW()),
+    ('perm_api_sensor_read',    'iot:sensor:read',    '传感数据查看', 2, 'perm_menu_sensor',    41, 1, NOW(), NOW()),
+    ('perm_api_group_manage',   'iot:group:manage',   '分组管理',     2, 'perm_menu_group',     51, 1, NOW(), NOW()),
+    ('perm_api_user_manage',    'iot:user:manage',    '用户管理',     2, 'perm_menu_system',    91, 1, NOW(), NOW()),
+    ('perm_api_role_manage',    'iot:role:manage',    '角色权限管理', 2, 'perm_menu_system',    92, 1, NOW(), NOW())
+ON DUPLICATE KEY UPDATE
+    `perm_name`   = VALUES(`perm_name`),
+    `perm_type`   = VALUES(`perm_type`),
+    `parent_perm_id` = VALUES(`parent_perm_id`),
+    `sort_num`    = VALUES(`sort_num`),
+    `status`      = VALUES(`status`),
+    `delete_time` = NULL,
+    `update_time` = NOW();
+
+-- ----------------------------
+-- 已存在的 OPERATOR / VIEWER 角色幂等补授权
+-- 使用 INSERT IGNORE 而非 NOT EXISTS 子查询：MySQL 不允许 INSERT 的目标表出现在其子查询中，
+-- 幂等性由 uk_org_role_perm(org_id, role_id, perm_id) 唯一键兜底
+-- 权限集合与 AuthConstants.BUILTIN_ROLE_PERM_TEMPLATE 保持一致
+-- ----------------------------
+INSERT IGNORE INTO `role_perm` (`id`, `org_id`, `role_id`, `perm_id`, `create_time`)
+SELECT REPLACE(UUID(), '-', ''), r.`org_id`, r.`role_id`, p.`perm_id`, NOW()
+FROM `role` r
+         JOIN `permission` p
+              ON p.`perm_code` IN ('iot:dashboard:read', 'iot:device:read', 'iot:device:write',
+                                   'iot:command:send', 'iot:sensor:read', 'iot:group:manage')
+WHERE r.`role_code` = 'OPERATOR'
+  AND r.`delete_time` IS NULL
+  AND p.`delete_time` IS NULL;
+
+INSERT IGNORE INTO `role_perm` (`id`, `org_id`, `role_id`, `perm_id`, `create_time`)
+SELECT REPLACE(UUID(), '-', ''), r.`org_id`, r.`role_id`, p.`perm_id`, NOW()
+FROM `role` r
+         JOIN `permission` p
+              ON p.`perm_code` IN ('iot:dashboard:read', 'iot:device:read', 'iot:sensor:read')
+WHERE r.`role_code` = 'VIEWER'
+  AND r.`delete_time` IS NULL
+  AND p.`delete_time` IS NULL;
+
+-- 授权变更后需清理相关用户的 Redis 权限缓存（auth:perm:{userId} / auth:perm:ver:{userId}），
+-- 或直接自增 user.perm_version，否则旧缓存在 TTL（默认 1800s）内仍然生效

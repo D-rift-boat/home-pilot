@@ -12,11 +12,15 @@ import org.springframework.scheduling.annotation.EnableScheduling;
  * 项目定位：面向 ESP32 等单片机的物联网设备管理平台，提供设备注册、传感器数据采集、
  * 指令下发、告警管理等功能。技术栈涵盖 Spring Boot 3.x + MyBatis-Plus + MQTT + InfluxDB + Redis。
  * </p>
+ * <p>
+ * 注意：启动类位于 {@code com.dboat.iot} 包下，而用户/认证模块位于 {@code com.dboat.user}，
+ * 默认包扫描无法覆盖，因此显式指定 scanBasePackages = "com.dboat" 扫描全部业务模块。
+ * </p>
  *
  * @author dboat
  */
 @Slf4j
-@SpringBootApplication
+@SpringBootApplication(scanBasePackages = "com.dboat")
 @EnableScheduling
 public class HomePilotApplication {
 
