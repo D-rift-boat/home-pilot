@@ -300,3 +300,39 @@ CREATE TABLE `iot_group_user_rel` (
                                       UNIQUE KEY `uk_org_group_user` (`org_id`,`group_id`,`user_id`),
                                       KEY `idx_org_user` (`org_id`,`user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='分组-用户业务权限关联表';
+
+CREATE TABLE auth_login_log (
+                                id VARCHAR(64) NOT NULL COMMENT '主键UUID',
+                                user_id VARCHAR(64) COMMENT '登录用户ID，登录失败场景可为NULL',
+                                identifier VARCHAR(128) COMMENT '登录标识：手机号/邮箱/账号',
+                                login_type TINYINT COMMENT '登录类型：1密码 2验证码 3第三方授权',
+                                login_ip VARCHAR(32) COMMENT '登录客户端IP',
+                                user_agent VARCHAR(255) COMMENT 'UA客户端信息',
+                                channel TINYINT DEFAULT 1 COMMENT '渠道：1Web 2App 3开放API',
+                                result TINYINT NOT NULL COMMENT '登录结果：0失败 1成功',
+                                fail_reason VARCHAR(128) COMMENT '失败原因：密码错误/账号锁定/验证码错误',
+                                create_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                                PRIMARY KEY (id),
+                                KEY idx_uid_time (user_id, create_time),
+                                KEY idx_ip_time (login_ip, create_time)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='登录审计日志表';
+
+CREATE TABLE sys_audit_log (
+                               id VARCHAR(64) NOT NULL COMMENT '主键UUID',
+                               user_id VARCHAR(64) NOT NULL COMMENT '操作人用户ID',
+                               org_id VARCHAR(64) NOT NULL COMMENT '租户ID',
+                               action VARCHAR(64) NOT NULL COMMENT '操作动作：device.delete / shadow.set / service.invoke',
+                               resource_type VARCHAR(32) COMMENT '资源类型：product/device/group/role/user',
+                               resource_id VARCHAR(64) COMMENT '操作资源ID',
+                               request_ip VARCHAR(32) COMMENT '请求客户端IP',
+                               request_uri VARCHAR(255) COMMENT '请求接口地址',
+                               request_method VARCHAR(8) COMMENT '请求方式 GET/POST/PUT/DELETE',
+                               params TEXT COMMENT '请求入参JSON，敏感字段脱敏存储',
+                               result TINYINT COMMENT '操作结果：0失败 1成功',
+                               error_msg VARCHAR(255) COMMENT '异常信息',
+                               cost_ms INT COMMENT '接口耗时(ms)',
+                               create_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '操作时间',
+                               PRIMARY KEY (id),
+                               KEY idx_uid_time (user_id, create_time),
+                               KEY idx_org_time (org_id, create_time)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='系统操作审计日志表';

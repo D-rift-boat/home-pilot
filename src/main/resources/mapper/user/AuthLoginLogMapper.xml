@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.dboat.user.mapper.AuthLoginLogMapper">
+
+    <resultMap id="BaseResultMap" type="com.dboat.user.entity.AuthLoginLog">
+            <id property="id" column="id" jdbcType="VARCHAR"/>
+            <result property="userId" column="user_id" jdbcType="VARCHAR"/>
+            <result property="identifier" column="identifier" jdbcType="VARCHAR"/>
+            <result property="loginType" column="login_type" jdbcType="TINYINT"/>
+            <result property="loginIp" column="login_ip" jdbcType="VARCHAR"/>
+            <result property="userAgent" column="user_agent" jdbcType="VARCHAR"/>
+            <result property="channel" column="channel" jdbcType="TINYINT"/>
+            <result property="result" column="result" jdbcType="TINYINT"/>
+            <result property="failReason" column="fail_reason" jdbcType="VARCHAR"/>
+            <result property="createTime" column="create_time" jdbcType="TIMESTAMP"/>
+    </resultMap>
+
+    <sql id="Base_Column_List">
+        id,user_id,identifier,
+        login_type,login_ip,user_agent,
+        channel,result,fail_reason,
+        create_time
+    </sql>
+</mapper>

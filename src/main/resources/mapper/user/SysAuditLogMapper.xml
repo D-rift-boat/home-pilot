@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.dboat.user.mapper.SysAuditLogMapper">
+
+    <resultMap id="BaseResultMap" type="com.dboat.user.entity.SysAuditLog">
+            <id property="id" column="id" jdbcType="VARCHAR"/>
+            <result property="userId" column="user_id" jdbcType="VARCHAR"/>
+            <result property="orgId" column="org_id" jdbcType="VARCHAR"/>
+            <result property="action" column="action" jdbcType="VARCHAR"/>
+            <result property="resourceType" column="resource_type" jdbcType="VARCHAR"/>
+            <result property="resourceId" column="resource_id" jdbcType="VARCHAR"/>
+            <result property="requestIp" column="request_ip" jdbcType="VARCHAR"/>
+            <result property="requestUri" column="request_uri" jdbcType="VARCHAR"/>
+            <result property="requestMethod" column="request_method" jdbcType="VARCHAR"/>
+            <result property="params" column="params" jdbcType="VARCHAR"/>
+            <result property="result" column="result" jdbcType="TINYINT"/>
+            <result property="errorMsg" column="error_msg" jdbcType="VARCHAR"/>
+            <result property="costMs" column="cost_ms" jdbcType="INTEGER"/>
+            <result property="createTime" column="create_time" jdbcType="TIMESTAMP"/>
+    </resultMap>
+
+    <sql id="Base_Column_List">
+        id,user_id,org_id,
+        action,resource_type,resource_id,
+        request_ip,request_uri,request_method,
+        params,result,error_msg,
+        cost_ms,create_time
+    </sql>
+</mapper>
