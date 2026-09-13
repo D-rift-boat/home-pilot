@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.dboat.user.mapper.UserAuthMapper">
+
+    <resultMap id="BaseResultMap" type="com.dboat.user.entity.UserAuth">
+            <id property="id" column="id" jdbcType="BIGINT"/>
+            <result property="orgId" column="org_id" jdbcType="VARCHAR"/>
+            <result property="userId" column="user_id" jdbcType="VARCHAR"/>
+            <result property="authType" column="auth_type" jdbcType="TINYINT"/>
+            <result property="identifier" column="identifier" jdbcType="VARCHAR"/>
+            <result property="credential" column="credential" jdbcType="VARCHAR"/>
+            <result property="passwordVersion" column="password_version" jdbcType="INTEGER"/>
+            <result property="lastPasswordChange" column="last_password_change" jdbcType="TIMESTAMP"/>
+            <result property="createTime" column="create_time" jdbcType="TIMESTAMP"/>
+            <result property="updateTime" column="update_time" jdbcType="TIMESTAMP"/>
+            <result property="deleteTime" column="delete_time" jdbcType="TIMESTAMP"/>
+    </resultMap>
+
+    <sql id="Base_Column_List">
+        id,org_id,user_id,
+        auth_type,identifier,credential,
+        password_version,last_password_change,create_time,
+        update_time,delete_time
+    </sql>
+</mapper>
