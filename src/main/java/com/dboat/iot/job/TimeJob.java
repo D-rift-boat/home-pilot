@@ -25,7 +25,7 @@ import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 import static com.dboat.iot.common.constants.MqttConstants.IOT_DEVICE_OFFLINE_TIMEOUT_MS;
-import static com.dboat.iot.common.constants.MqttConstants.IOT_DEVICE_ONLINE_PREFIX;
+import static com.dboat.iot.common.constants.MqttConstants.IOT_DEV_SHADOW;
 import static com.dboat.iot.common.constants.WebSocketConstants.*;
 
 @Slf4j
@@ -225,7 +225,7 @@ public class TimeJob {
 		int offlineCount = 0;
 
 		try (Cursor<String> cursor = redisTemplate.scan(
-				ScanOptions.scanOptions().match(IOT_DEVICE_ONLINE_PREFIX + "*").count(100).build())) {
+				ScanOptions.scanOptions().match(IOT_DEV_SHADOW + "*").count(100).build())) {
 
 			while (cursor.hasNext()) {
 				String key = cursor.next();

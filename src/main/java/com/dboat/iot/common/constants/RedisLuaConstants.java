@@ -162,4 +162,20 @@ public final class RedisLuaConstants {
         return {delCount, remainCount}
         """;
 
+    //===========================  iot device manage lua  ==============================
+    /**
+     * LUA_IOT_DEV_HEARTBEAT
+     * KEYS[1]: iot device heartbeat key
+     * ARGV[1]: heartbeat timestamp
+     * ARGV[2]: expire time   s
+     * return 1: updated; 0: not updated
+     */
+    public static final String LUA_IOT_DEV_HEARTBEAT = """
+            local oldTs = redis.call('GET', KEYS[1])
+            if oldTs and tonumber(ARGV[1]) <= tonumber(oldTs) then
+                return 0
+            end
+            redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
+            return 1
+            """;
 }

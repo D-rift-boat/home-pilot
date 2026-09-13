@@ -17,17 +17,14 @@ public final class RedisConstants {
      */
     public static final String DEVICE_LATEST_PREFIX = "ws:iot_device:latest:";
 
-    /**
-     * 在线 IoT 设备总数 Key 前缀：ws:stat:online_iot_device_count:{userId}
-     */
-    public static final String IOT_ONLINE_COUNT_PREFIX = "ws:stat:online_iot_device_count:";
 
-    // ==================== TTL 常量 ====================
+    // ==================== ex 常量 ====================
 
     /**
      * 设备最新数据 TTL：24小时（长时间无上报自动过期，判定设备离线）
      */
     public static final long DEVICE_LATEST_DATA_TTL_HOURS = 24;
+
 
     /**
      * IoT 设备在线列表 TTL：86400秒（24小时），与 Lua 脚本中的 EXPIRE 保持一致

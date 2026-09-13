@@ -16,7 +16,7 @@ import java.util.List;
  *
  * @author dboat
  */
-public interface SensorDataService {
+public interface TelemetryDataService {
 
     /**
      * 保存传感器遥测数据到 InfluxDB

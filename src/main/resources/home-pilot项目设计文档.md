@@ -302,7 +302,7 @@ src
 │   │               │   └── DeviceCommandMapper.java
 │   │               ├── service  // 业务接口
 │   │               │   ├── DeviceService.java
-│   │               │   ├── SensorDataService.java
+│   │               │   ├── TelemetryDataService.java
 │   │               │   └── DeviceCommandService.java
 │   │               ├── service.impl  // 业务实现类
 │   │               │   ├── DeviceServiceImpl.java
@@ -358,15 +358,15 @@ src
 
 ## 6\.1 SensorData 相关设计说明（实体类、Mapper 存在必要性）
 
-项目目录结构中存在 SensorData 实体类、SensorDataService 等相关模块，虽未在 MySQL 表结构中体现（因传感器数据存储于 InfluxDB），但该设计具备明确必要性，具体原因如下：
+项目目录结构中存在 SensorData 实体类、TelemetryDataService 等相关模块，虽未在 MySQL 表结构中体现（因传感器数据存储于 InfluxDB），但该设计具备明确必要性，具体原因如下：
 
 - **适配 InfluxDB 数据操作需求**：SensorData 实体类并非对应 MySQL 表，而是映射 InfluxDB 的 measurement（sensor），用于封装传感器时序数据（温度、湿度、气压等），通过 InfluxDB 客户端实现数据的写入与查询，是 InfluxDB 数据操作的核心载体，若无该实体类，无法规范数据封装与传输。
 
-- **规范业务逻辑分层**：SensorDataService 及实现类，专门处理传感器数据的存储、查询业务，与设备管理、指令管理等业务模块分离，符合“单一职责原则”，避免业务逻辑混杂，便于后期维护与扩展（如新增传感器数据统计、告警等功能）。
+- **规范业务逻辑分层**：TelemetryDataService 及实现类，专门处理传感器数据的存储、查询业务，与设备管理、指令管理等业务模块分离，符合“单一职责原则”，避免业务逻辑混杂，便于后期维护与扩展（如新增传感器数据统计、告警等功能）。
 
 - **对接 API 层数据交互**：API 层的 SensorDataController 提供传感器数据查询接口，需通过 SensorData 实体类封装查询结果，再转换为 DTO 返回给前端，实现数据的标准化传输，同时避免直接暴露 InfluxDB 底层数据结构。
 
-- **预留扩展空间**：后期若需对传感器数据进行复杂处理（如数据清洗、批量查询、历史数据导出等），可直接在 SensorDataService 中扩展相关方法，无需重构整体架构，提升系统扩展性。
+- **预留扩展空间**：后期若需对传感器数据进行复杂处理（如数据清洗、批量查询、历史数据导出等），可直接在 TelemetryDataService 中扩展相关方法，无需重构整体架构，提升系统扩展性。
 
 补充说明：目录中 SensorDataMapper 已移除（原设计冗余），因 InfluxDB 数据操作无需 MyBatis\-Plus 映射接口，通过 InfluxDB 客户端工具类（InfluxDBUtils）即可实现数据读写，贴合 InfluxDB 时序数据库的操作特性。
 

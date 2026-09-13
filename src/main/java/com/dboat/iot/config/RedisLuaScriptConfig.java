@@ -118,4 +118,22 @@ public class RedisLuaScriptConfig {
         return script;
     }
 
+
+    //=========================== iot lua =============================
+    /**
+     * device heartbeat Lua script
+     * KEYS[1]: iot device heartbeat key
+     * ARGV[1]: heartbeat timestamp
+     * ARGV[2]: expire time  s
+     * return 1: updated; 0: not updated
+     * @return DefaultRedisScript<Long>
+     */
+    @Bean
+    public DefaultRedisScript<Integer> iotDevHeartbeatScript() {
+        DefaultRedisScript<Integer> script = new DefaultRedisScript<>();
+        script.setScriptText(RedisLuaConstants.LUA_IOT_DEV_HEARTBEAT);
+        script.setResultType(Integer.class);
+        return script;
+    }
+
 }

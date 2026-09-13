@@ -9,7 +9,7 @@ import com.dboat.iot.entity.SensorData;
 import com.dboat.iot.enums.SensorStatusEnum;
 import com.dboat.iot.service.DeviceLogService;
 import com.dboat.iot.service.DeviceService;
-import com.dboat.iot.service.SensorDataService;
+import com.dboat.iot.service.TelemetryDataService;
 import com.dboat.iot.service.UserDeviceRelService;
 import com.dboat.iot.service.ws.WsDistributedPushService;
 import com.dboat.iot.service.ws.DeviceStateService;
@@ -18,8 +18,10 @@ import org.apache.commons.lang3.ObjectUtils;
 import org.eclipse.paho.client.mqttv3.MqttMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
@@ -30,6 +32,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 
 /**
  * MQTT 消息处理器
@@ -79,7 +82,7 @@ public class MqttMessageHandler {
     /** 设备资产服务，用于自动注册设备 */
     private final DeviceService deviceService;
     /** 传感器数据服务，用于写入/查询 InfluxDB 数据 */
-    private final SensorDataService sensorDataService;
+    private final TelemetryDataService telemetryDataService;
     /** 设备日志服务，用于记录设备上下线、异常等事件 */
     private final DeviceLogService deviceLogService;
     /** Redis 设备状态服务，用于刷新设备实时状态 */
@@ -88,6 +91,7 @@ public class MqttMessageHandler {
     private final WsDistributedPushService wsPushService;
     /** 用户-设备关系服务，用于查询设备订阅者列表 */
     private final UserDeviceRelService userDeviceRelService;
+    private final StringRedisTemplate stringRedisTemplate;
     @Value("${mqtt.webHookSwitch}")
     private String webHookSwitch;
     /** 直连订阅模式开关：true=遥测数据直接写入 InfluxDB；false=由 EMQX 规则引擎转发 Kafka，消费端写入 */
@@ -100,26 +104,27 @@ public class MqttMessageHandler {
      *
      * @param mqttClientManager    MQTT 客户端管理器（延迟注入）
      * @param deviceService        设备资产服务
-     * @param sensorDataService    传感器数据服务
+     * @param telemetryDataService    传感器数据服务
      * @param deviceLogService     设备日志服务
      * @param deviceStateService     Redis 状态服务
      * @param wsPushService          WS分布式推送服务（用户级精准推送）
      * @param userDeviceRelService   用户-设备关系服务（查询订阅者）
      */
     public MqttMessageHandler(@Lazy MqttClientManager mqttClientManager,
-                               DeviceService deviceService,
-                               SensorDataService sensorDataService,
-                               DeviceLogService deviceLogService,
-                               DeviceStateService deviceStateService,
-                               WsDistributedPushService wsPushService,
-                               UserDeviceRelService userDeviceRelService) {
+							  DeviceService deviceService,
+							  TelemetryDataService telemetryDataService,
+							  DeviceLogService deviceLogService,
+							  DeviceStateService deviceStateService,
+							  WsDistributedPushService wsPushService,
+							  UserDeviceRelService userDeviceRelService, @Qualifier("stringRedisTemplate") StringRedisTemplate stringRedisTemplate) {
         this.mqttClientManager = mqttClientManager;
         this.deviceService = deviceService;
-        this.sensorDataService = sensorDataService;
+        this.telemetryDataService = telemetryDataService;
         this.deviceLogService = deviceLogService;
         this.deviceStateService = deviceStateService;
         this.wsPushService = wsPushService;
         this.userDeviceRelService = userDeviceRelService;
+        this.stringRedisTemplate = stringRedisTemplate;
     }
 
     /**
@@ -146,7 +151,7 @@ public class MqttMessageHandler {
         try {
             if (topic.startsWith(TOPIC_SENSOR_UPLOAD_PREFIX)) {
                 // 传感器数据主题
-                handleMqttDeviceDataUpload(upDataMessage);
+                handleTelemetryDataUpload(upDataMessage);
             } else if (topic.startsWith(TOPIC_CLIENT_STAUTS_PREFIX)) {
                 // 若不启用 WebHook，则使用固件固定上下线机制 处理设备状态主题
                 if (!"true".equals(webHookSwitch)) {
@@ -169,6 +174,42 @@ public class MqttMessageHandler {
     }
 
     /**
+     * 处理iot 设备心跳上报
+     * <p>
+     * 完整处理流程：
+     * <ol>
+     *   <li>解析 header + payload 结构</li>
+     *   <li>刷新设备 redis active 心跳时间</li>
+     * </ol>
+     * </p>
+     */
+    public void handleIotHeartbeatUpload(MqttUpDataMessage message) {
+        MqttMessageHeader header = message.getHeader();
+        MqttMessagePayload payload = message.getPayload();
+
+        if (ObjectUtils.isEmpty(header)) {
+            log.error("Invalid HEART_BEAT payload: {}", payload);
+            return;
+        }
+
+        // check message type
+        if (!MqttConstants.HEART_BEAT.equals(header.getMsgType())) {
+            log.warn("Unexpected heartbeat msgType : {}", header.getMsgType());
+            return;
+        }
+
+        String deviceId = header.getDeviceId();
+        if (ObjectUtils.isEmpty(deviceId)) {
+            log.error("Missing deviceId in HEART_BEAT header: {}", payload);
+            return;
+        }
+
+        // 校验消息是否是最新消息  查实时数据快照时间戳进行时间比对
+        Boolean dealRes = deviceStateService.dealIotHeartBeat(header);
+        log.debug("Processed UP_DATA from device: {}", deviceId);
+    }
+
+    /**
      * 处理传感器数据上报（UP_DATA 标准格式）
      * <p>
      * 完整处理流程：
@@ -176,12 +217,12 @@ public class MqttMessageHandler {
      *   <li>解析 header + payload 结构</li>
      *   <li>自动注册设备（首次上报）</li>
      *   <li>时序入库 InfluxDB（仅直连订阅模式，关闭时由 Kafka 消费端写入）</li>
-     *   <li>刷新 Redis 设备快照（{userId}:{deviceId}:latest，TTL 24h）+ 维护在线数</li>
+     *   <li>刷新 Redis 设备快照（iot:active:{devId}，TTL 24h）+ 维护在线数</li>
      *   <li>组装 WebSocket 推送报文，广播给所有前端会话</li>
      * </ol>
      * </p>
      */
-    public void handleMqttDeviceDataUpload(MqttUpDataMessage message) {
+    public void handleTelemetryDataUpload(MqttUpDataMessage message) {
         MqttMessageHeader header = message.getHeader();
         MqttMessagePayload payload = message.getPayload();
 
@@ -203,13 +244,13 @@ public class MqttMessageHandler {
         }
 
         // 校验消息是否是最新消息  查实时数据快照时间戳进行时间比对
-        JSONObject latestData = deviceStateService.getIotDeviceLatestDataByDeviceId(deviceId);
-        if (ObjectUtils.isNotEmpty(latestData) && header.getTimestamp() < latestData.getLong("timestamp")) {
+        String latestActiTs = deviceStateService.getDeviceActiveInfo(deviceId);
+        if (ObjectUtils.isNotEmpty(latestActiTs) && header.getTimestamp() < Long.valueOf(latestActiTs)) {
             log.warn("Outdated sensor data, ignore: {}", header.getTraceId());
             return;
         }
 
-        log.info("UP_DATA received from device [{}], traceId={}", deviceId, header.getTraceId());
+        log.debug("UP_DATA received from device [{}], traceId={}", deviceId, header.getTraceId());
 
 
         // 自动注册设备（首次上报时自动创建）  TODO 可优化 先查redis注册设备列表
@@ -226,16 +267,17 @@ public class MqttMessageHandler {
 
         // ========== 异步写入 InfluxDB ==========
         SensorData sensorData = buildSensorData(deviceId, payload, deviceStatus, aht20Status, bmp280Status);
-        sensorDataService.saveSensorData(sensorData);
+        telemetryDataService.saveSensorData(sensorData);
 
         // ========== 刷新 Redis 设备快照 、维护用户在线iot设备列表、维护在线iot设备数 ==========
         // 构建完整设备数据 JSON（存入 {userId}:{deviceId}:latest，TTL 24h）
         Map deviceDataMap = buildDeviceLatestMap(deviceId, deviceStatus, aht20Status, bmp280Status, payload, header.getTimestamp());
-        deviceStateService.updateDeviceLatestData(deviceId, deviceDataMap);
+        //deviceStateService.updateDeviceLatestData(deviceId, deviceDataMap);
 
         // ========== WebSocket 用户级实时推送 ==========
         try {
             String wsMessage = buildWebSocketPushMessage(message);
+            wsPushService.pushToAllUserSubcriGroup(deviceId, wsMessage);
             // 查询订阅该设备的用户列表，逐一推送
             Set<String> subscriberUserIds = userDeviceRelService.getSubscriberUserIds(deviceId);
             for (String userId : subscriberUserIds) {
@@ -380,7 +422,7 @@ public class MqttMessageHandler {
      */
     private String buildOfflineContext(String deviceId) {
         try {
-            SensorData lastData = sensorDataService.getLatestSensorDataRaw(deviceId);
+            SensorData lastData = telemetryDataService.getLatestSensorDataRaw(deviceId);
             if (lastData != null) {
                 JSONObject context = new JSONObject();
                 context.put("last_seen_time", lastData.getReportTime() != null

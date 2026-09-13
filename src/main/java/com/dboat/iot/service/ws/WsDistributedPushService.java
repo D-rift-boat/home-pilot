@@ -83,4 +83,20 @@ public class WsDistributedPushService {
             }
         }
     }
+
+    /**
+     * 给指定所有订阅 group的 user 推送消息
+     */
+    public void pushToAllUserSubcriGroup(String deviceId, String wsMessage) {
+        try {
+            // 查询订阅该设备的用户列表，逐一推送
+            //Set<String> subscriberUserIds = userDeviceRelService.getSubscriberUserIds(deviceId);
+            //for (String userId : subscriberUserIds) {
+            //    this.pushToUser(userId, "REAL_TIME_DATA", wsMessage);
+            //}
+        } catch (Exception e) {
+            log.warn("Failed to push WS message for device [{}]: {}", deviceId, e.getMessage());
+        }
+
+    }
 }

@@ -1,6 +1,8 @@
 package com.dboat.iot.service.ws;
 
 import com.alibaba.fastjson2.JSONObject;
+import com.dboat.iot.common.constants.MqttConstants;
+import com.dboat.iot.dto.mqtt.MqttMessageHeader;
 import com.dboat.iot.dto.ws.IotDevLineDTO;
 import com.dboat.iot.dto.ws.WsUploadDataDTO;
 import com.dboat.iot.service.UserDeviceRelService;
@@ -21,7 +23,7 @@ import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
-import static com.dboat.iot.common.constants.MqttConstants.IOT_DEVICE_ONLINE_PREFIX;
+import static com.dboat.iot.common.constants.MqttConstants.IOT_DEV_SHADOW;
 import static com.dboat.iot.common.constants.RedisConstants.*;
 
 /**
@@ -74,6 +76,12 @@ public class DeviceStateService {
     private RScript scriptExecutor;
 
     /**
+     * Lua 脚本：设备心跳处理
+     */
+    @Resource
+    private DefaultRedisScript<Integer> iotDevHeartbeatScript;
+
+    /**
      * Lua 脚本：仅当值为正数时递减（防止计数器减到负数）
      */
     private final DefaultRedisScript<Long> decrScript =
@@ -87,13 +95,6 @@ public class DeviceStateService {
      */
     private String buildLatestKey(String deviceId) {
         return DEVICE_LATEST_PREFIX + deviceId;
-    }
-
-    /**
-     * 构建用户在线 IoT 设备总数 Key：ws:stat:online_iot_device_count:{userId}
-     */
-    private String buildIotOnlineCountKey(String userId) {
-        return IOT_ONLINE_COUNT_PREFIX + userId;
     }
 
     // ==================== 设备最新数据操作 ====================
@@ -128,13 +129,37 @@ public class DeviceStateService {
             Map<String, String> iotOnlineMap = new HashMap<>();
             iotOnlineMap.put(deviceId, JSONObject.toJSONString(devLine));
 
-            String iotOnlineKey = IOT_DEVICE_ONLINE_PREFIX + userId;
+            String iotOnlineKey = String.format(IOT_DEV_SHADOW, userId);
             // 原子化：批量写入 + 设置整key过期
             atomicHashPutAll(iotOnlineKey, iotOnlineMap, DEVICE_LATEST_DATA_TTL_HOURS, TimeUnit.HOURS);
         }
 
         log.debug("Refreshed device latest data: {}", deviceId);
         return true;
+    }
+
+
+    /**
+     * 处理iot设备心跳（SET + TTL 90s）
+     * <p>
+     * 若 Key 不存在（首次上报 / 过期后重新上报），自动 INCR 在线设备总数。
+     * 若 Key 已存在，仅更新数据，不改变在线计数。
+     * </p>
+     *
+     * @param header     mqtt 报文 header
+     * @return true=新设备上线（Key 新建），false=已有设备数据刷新
+     */
+    public Boolean dealIotHeartBeat(MqttMessageHeader header) {
+        String deviceId = header.getDeviceId();
+        // ========== 刷新 Redis 设备心跳记录  ex 90s
+        Integer executeRes = stringRedisTemplate.execute(iotDevHeartbeatScript,
+                Collections.singletonList(String.format(MqttConstants.IOT_DEV_ACTIVE, header.getDeviceId())),
+                header.getTimestamp().toString(),
+                String.valueOf(MqttConstants.IOT_DEV_ACTIVE_EX));
+
+        log.debug("Processed UP_DATA from device: {}", deviceId);
+
+        return ObjectUtils.isNotEmpty(executeRes) && executeRes > 0;
     }
 
     /**
@@ -369,17 +394,10 @@ public class DeviceStateService {
     // ==================== 在线设备数操作 ====================
 
     /**
-     * 在线设备数 +1（原子操作）
-     */
-    public void incrementOnlineIotCount(String userId) {
-        stringRedisTemplate.opsForValue().increment(buildIotOnlineCountKey(userId));
-    }
-
-    /**
      * 删除用户在线设备列表中的指定设备
      */
     public Long offlineUserIotDev(String userId, String iotDeviceId) {
-        String redisKey = IOT_DEVICE_ONLINE_PREFIX + userId;
+        String redisKey = String.format(IOT_DEV_SHADOW, userId);
         IotDevLineDTO iotDevLineDTO = IotDevLineDTO.builder()
                 .deviceId(iotDeviceId)
                 .lastReportTs(String.valueOf(System.currentTimeMillis()))
@@ -405,7 +423,7 @@ public class DeviceStateService {
      * 新增/更新用户在线设备列表中的指定设备（原子操作）
      */
     public Long onlineUserIotDev(String userId, String iotDeviceId) {
-        String redisKey = IOT_DEVICE_ONLINE_PREFIX + userId;
+        String redisKey = String.format(IOT_DEV_SHADOW, userId);
         IotDevLineDTO iotDevLineDTO = IotDevLineDTO.builder()
                 .deviceId(iotDeviceId)
                 .lastReportTs(String.valueOf(System.currentTimeMillis()))
@@ -429,7 +447,7 @@ public class DeviceStateService {
      * @return 在线设备数，Key 不存在时返回 0
      */
     public Long getUserIotDeviceOnlineCount(String userId) {
-        String redisKey = IOT_DEVICE_ONLINE_PREFIX + userId;
+        String redisKey = String.format(IOT_DEV_SHADOW, userId);
 
         Long countStr = stringRedisTemplate.opsForHash().size(redisKey);
         if (ObjectUtils.isEmpty(countStr)) {
@@ -447,7 +465,7 @@ public class DeviceStateService {
      * @return 在线设备映射，Key 不存在时返回空 Map
      */
     public Map<String, JSONObject> getUserDeviceOnlineMapList(String userId) {
-        String redisKey = IOT_DEVICE_ONLINE_PREFIX + userId;
+        String redisKey = String.format(IOT_DEV_SHADOW, userId);
 
         Map<String, JSONObject> entries = stringRedisTemplate.opsForHash().entries(redisKey).entrySet().stream()
                 .collect(Collectors.toMap(
@@ -472,12 +490,21 @@ public class DeviceStateService {
      * @return 在线设备ID集合
      */
     public Set<String> getOnlineDeviceIds(String userId) {
-        String redisKey = IOT_DEVICE_ONLINE_PREFIX + userId;
+        String redisKey = String.format(IOT_DEV_SHADOW, userId);
 
         Set<String> members = stringRedisTemplate.opsForHash().keys(redisKey).stream().map(Object::toString).collect(Collectors.toSet());
         if (ObjectUtils.isEmpty(members)) {
             members = Collections.emptySet();
         }
         return members;
+    }
+
+    /**
+     * 获取设备活跃信息
+     * @param deviceId
+     * @return
+     */
+    public String getDeviceActiveInfo(String deviceId) {
+        return stringRedisTemplate.opsForValue().get(String.format(MqttConstants.IOT_DEV_ACTIVE, deviceId));
     }
 }

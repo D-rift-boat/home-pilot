@@ -6,7 +6,7 @@ import com.dboat.iot.dto.request.SensorDataLatestReqDTO;
 import com.dboat.iot.dto.request.SensorDataQueryReqDTO;
 import com.dboat.iot.dto.response.SensorDataRespDTO;
 import com.dboat.iot.entity.SensorData;
-import com.dboat.iot.service.SensorDataService;
+import com.dboat.iot.service.TelemetryDataService;
 import com.dboat.iot.utils.InfluxDBUtils;
 import com.influxdb.exceptions.InfluxException;
 import org.slf4j.Logger;
@@ -28,16 +28,16 @@ import java.util.stream.Collectors;
  * @author dboat
  */
 @Service
-public class SensorDataServiceImpl implements SensorDataService {
+public class TelemetryDataServiceImpl implements TelemetryDataService {
 
-    private static final Logger log = LoggerFactory.getLogger(SensorDataServiceImpl.class);
+    private static final Logger log = LoggerFactory.getLogger(TelemetryDataServiceImpl.class);
 
     /** InfluxDB 操作工具类 */
     private final InfluxDBUtils influxDBUtils;
     /** InfluxDB 配置（获取 bucket、org 等参数） */
     private final InfluxDBConfig influxDBConfig;
 
-    public SensorDataServiceImpl(InfluxDBUtils influxDBUtils, InfluxDBConfig influxDBConfig) {
+    public TelemetryDataServiceImpl(InfluxDBUtils influxDBUtils, InfluxDBConfig influxDBConfig) {
         this.influxDBUtils = influxDBUtils;
         this.influxDBConfig = influxDBConfig;
     }

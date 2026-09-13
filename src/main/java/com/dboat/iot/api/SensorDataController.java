@@ -4,7 +4,7 @@ import com.dboat.iot.dto.request.SensorDataLatestReqDTO;
 import com.dboat.iot.dto.request.SensorDataQueryReqDTO;
 import com.dboat.iot.dto.response.Result;
 import com.dboat.iot.dto.response.SensorDataRespDTO;
-import com.dboat.iot.service.SensorDataService;
+import com.dboat.iot.service.TelemetryDataService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -27,11 +27,11 @@ import java.util.List;
 public class SensorDataController {
 
     /** 传感器数据业务服务 */
-    private final SensorDataService sensorDataService;
+    private final TelemetryDataService telemetryDataService;
 
     /** 构造器注入传感器数据服务 */
-    public SensorDataController(SensorDataService sensorDataService) {
-        this.sensorDataService = sensorDataService;
+    public SensorDataController(TelemetryDataService telemetryDataService) {
+        this.telemetryDataService = telemetryDataService;
     }
 
     /**
@@ -40,7 +40,7 @@ public class SensorDataController {
     @PostMapping("/history")
     @Operation(summary = "历史数据查询", description = "按设备ID和时间范围查询传感器遥测数据")
     public Result<List<SensorDataRespDTO>> queryHistory(@Valid @RequestBody SensorDataQueryReqDTO request) {
-        return Result.ok(sensorDataService.querySensorData(request));
+        return Result.ok(telemetryDataService.querySensorData(request));
     }
 
     /**
@@ -49,7 +49,7 @@ public class SensorDataController {
     @PostMapping("/latest")
     @Operation(summary = "最新数据查询", description = "获取指定设备的最新传感器数据")
     public Result<SensorDataRespDTO> getLatest(@Valid @RequestBody SensorDataLatestReqDTO request) {
-        SensorDataRespDTO data = sensorDataService.getLatestSensorData(request);
+        SensorDataRespDTO data = telemetryDataService.getLatestSensorData(request);
         return Result.ok(data);
     }
 }

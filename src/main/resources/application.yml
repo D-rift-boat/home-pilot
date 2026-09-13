@@ -77,7 +77,9 @@ spring:
 # kafka topic名称（应用启动时会自动创建以下Topic）
 kafka:
   topic:
-    telemetry-data-topic: telemetry-data # 传感器遥测数据Topic
+    telemetry-data: telemetry-data
+    iot-device-status: iot-device-status
+    iot-heartbeat: iot-heartbeat
     dlq: dlq-iot # 消费失败死信Topic
 
 
