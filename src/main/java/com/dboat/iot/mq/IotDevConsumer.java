@@ -133,14 +133,14 @@ public class IotDevConsumer {
 		if (records == null || records.isEmpty()) {
 			return;
 		}
-		log.info("Consumed {} telemetry msg(s) from kafka", records.size());
+		log.info("Consumed {} heartbeat msg(s) from kafka", records.size());
 
 		// 逐条解析并复用 MQTT 上行处理链路（解析失败仅跳过该条，不阻塞整批）
 		for (ConsumerRecord<String, String> record : records) {
 			try {
 				MqttUpDataMessage msg = parseToUpDataMessage(record.value());
 				if (ObjectUtils.isEmpty(msg)) {
-					log.warn("Invalid telemetry msg, skip. offset={}, value={}",
+					log.warn("Invalid heartbeat msg, skip. offset={}, value={}",
 							record.offset(), record.value());
 					continue;
 				}
@@ -151,7 +151,7 @@ public class IotDevConsumer {
 				}
 				mqttMessageHandler.handleIotHeartbeatUpload(msg);
 			} catch (Exception e) {
-				log.error("Failed to handle telemetry msg, skip. offset={}, value={}",
+				log.error("Failed to handle heartbeat msg, skip. offset={}, value={}",
 						record.offset(), record.value(), e);
 			}
 		}

@@ -28,7 +28,7 @@ public class Device {
 
     /**
      * 设备唯一标识（业务ID），如 "esp32-S3-001"
-     * <p>对应 MQTT 主题 iot/sensor/upload/{device_id} 中的 {device_id} 部分</p>
+     * <p>对应 MQTT 主题 iot/telemetry/upload/{device_id} 中的 {device_id} 部分</p>
      */
     private String deviceId;
 

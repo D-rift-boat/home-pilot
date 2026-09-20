@@ -5,7 +5,7 @@ import lombok.Data;
 /**
  * MQTT 数据上报消息 DTO —— 对应设备上行消息类型 UP_DATA
  * <p>
- * 标准 header + payload 结构，设备通过 MQTT 主题 iot/sensor/upload/+ 上报传感器遥测数据。
+ * 标准 header + payload 结构，设备通过 MQTT 主题 iot/telemetry/upload/+ 上报传感器遥测数据。
  * </p>
  *
  * @author dboat

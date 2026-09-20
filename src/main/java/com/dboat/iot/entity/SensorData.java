@@ -32,7 +32,7 @@ public class SensorData {
 
     /**
      * 设备唯一标识（InfluxDB Tag，用于索引和过滤）
-     * <p>对应 MQTT 主题 iot/sensor/upload/{device_id} 中的设备ID</p>
+     * <p>对应 MQTT 主题 iot/telemetry/upload/{device_id} 中的设备ID</p>
      */
     @Column(tag = true)
     private String deviceId;

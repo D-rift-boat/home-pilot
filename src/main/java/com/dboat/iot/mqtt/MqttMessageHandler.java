@@ -1,7 +1,6 @@
 package com.dboat.iot.mqtt;
 
 import com.alibaba.fastjson2.JSONObject;
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.dboat.iot.common.constants.DeviceLogEnum;
 import com.dboat.iot.common.constants.MqttConstants;
 import com.dboat.iot.dto.mqtt.*;
@@ -14,12 +13,9 @@ import com.dboat.iot.service.ws.WsDistributedPushService;
 import com.dboat.iot.service.ws.DeviceRedisService;
 import com.dboat.iot.utils.DateTimeUtils;
 import com.dboat.iot.utils.JsonUtils;
-import lombok.AllArgsConstructor;
 import lombok.RequiredArgsConstructor;
 import org.apache.commons.lang3.ObjectUtils;
 import org.eclipse.paho.client.mqttv3.MqttMessage;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -61,9 +57,9 @@ public class MqttMessageHandler {
 	private static final Logger log = LoggerFactory.getLogger(MqttMessageHandler.class);
 
 	/**
-	 * 设备数据上报主题前缀（完整主题: iot/sensor/upload/{device_id}）
+	 * 设备数据上报主题前缀（完整主题: iot/telemetry/upload/{device_id}）
 	 */
-	private static final String TOPIC_SENSOR_UPLOAD_PREFIX = "iot/sensor/upload/";
+	private static final String TOPIC_SENSOR_UPLOAD_PREFIX = "iot/telemetry/upload/";
 
 	/**
 	 * EMQX 设备断连事件主题（通配符匹配所有 Broker 节点的所有客户端断连）
@@ -158,7 +154,7 @@ public class MqttMessageHandler {
 	 * <p>
 	 * 根据主题前缀将消息分发到对应的处理方法：
 	 * <ul>
-	 *   <li>iot/sensor/upload/* → 传感器数据处理</li>
+	 *   <li>iot/telemetry/upload/* → 传感器数据处理</li>
 	 *   <li>$SYS/brokers/clients/disconnected → 设备断连处理</li>
 	 * </ul>
 	 * </p>
@@ -283,8 +279,8 @@ public class MqttMessageHandler {
 		}
 
 		// 校验消息是否是最新消息  查实时数据快照时间戳进行时间比对
-		String latestActiTs = deviceRedisService.getDeviceActiveInfo(deviceId);
-		if (ObjectUtils.isNotEmpty(latestActiTs) && header.getTimestamp() < Long.valueOf(latestActiTs)) {
+		JSONObject latestData = deviceRedisService.getDevActiveJsonInfo(deviceId);
+		if (ObjectUtils.isNotEmpty(latestData) && header.getTimestamp() < Long.valueOf(latestData.getString("activeTs"))) {
 			log.warn("Outdated sensor data, ignore: {}", header.getTraceId());
 			return;
 		}
@@ -316,14 +312,18 @@ public class MqttMessageHandler {
 		// ========== WebSocket 用户级实时推送 ==========
 		try {
 			String wsMessage = buildWebSocketPushMessage(message);
-			wsPushService.pushToAllUserSubcriGroup(deviceId, wsMessage);
+			//wsPushService.pushToAllUserSubcriGroup(deviceId, wsMessage);
 			// 查询订阅该设备的用户列表，逐一推送
-			Set<String> subscriberUserIds = userDeviceRelService.getSubscriberUserIds(deviceId);
-			for (String userId : subscriberUserIds) {
+			// query IOT_GROUP_REL
+			Set<String> devRelGroupSet = deviceRedisService.getDevRelGroupSet(latestData.getString("groupId"), latestData.getString("orgId"));
+
+			// query IOT_ORG_GROUP_AUTH
+			Set<String> relGroupAuthSet = deviceRedisService.getRelGroupAuthSet(devRelGroupSet, latestData.getString("orgId"));
+			for (String userId : relGroupAuthSet) {
 				wsPushService.pushToUser(userId, "REAL_TIME_DATA", wsMessage);
 			}
 		} catch (Exception e) {
-			log.warn("Failed to push WS message for device [{}]: {}", deviceId, e.getMessage());
+			log.warn("Failed to push WS message for device [{}]: {}", deviceId, e);
 		}
 
 		log.info("Processed UP_DATA from device: {}", deviceId);

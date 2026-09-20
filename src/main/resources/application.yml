@@ -110,7 +110,7 @@ mqtt:
   automatic-reconnect: true
   clean-session: true
   subscribe-topics:
-    - iot/sensor/upload/+
+    - iot/telemetry/upload/+
     - iot/device/status/+
   subscribe-qos:
     - 1

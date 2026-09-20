@@ -49,7 +49,7 @@ public class MqttConfig {
     /** 是否清除会话，默认 true，每次连接不保留离线期间的消息 */
     private boolean cleanSession = true;
 
-    /** 需要订阅的 MQTT 主题列表（业务主题），如 iot/sensor/upload/+ */
+    /** 需要订阅的 MQTT 主题列表（业务主题），如 iot/telemetry/upload/+ */
     private String[] subscribeTopics;
 
     /** 各订阅主题对应的 QoS 等级（0=最多一次, 1=至少一次, 2=恰好一次） */
