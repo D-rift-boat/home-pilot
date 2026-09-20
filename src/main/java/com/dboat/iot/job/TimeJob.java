@@ -1,12 +1,13 @@
 package com.dboat.iot.job;
 
 import com.alibaba.fastjson2.JSONObject;
+import com.dboat.iot.common.constants.MqttConstants;
 import com.dboat.iot.dto.ws.IotDevLineDTO;
 import com.dboat.iot.dto.ws.WsUploadDataDTO;
 import com.dboat.iot.enums.WsTypeEnum;
 import com.dboat.iot.service.UserDeviceRelService;
 import com.dboat.iot.service.ws.WsDistributedPushService;
-import com.dboat.iot.service.ws.DeviceStateService;
+import com.dboat.iot.service.ws.DeviceRedisService;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.ObjectUtils;
@@ -17,12 +18,13 @@ import org.springframework.data.redis.core.*;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.springframework.util.CollectionUtils;
 
 import java.nio.charset.StandardCharsets;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
+import java.util.stream.LongStream;
 
 import static com.dboat.iot.common.constants.MqttConstants.IOT_DEVICE_OFFLINE_TIMEOUT_MS;
 import static com.dboat.iot.common.constants.MqttConstants.IOT_DEV_SHADOW;
@@ -44,7 +46,7 @@ public class TimeJob {
 	private RedisTemplate<String, Object> redisTemplate;
 
 	@Resource
-	private DeviceStateService deviceStateService;
+	private DeviceRedisService deviceRedisService;
 
 	/** WS 分布式推送服务，用户级精准推送 */
 	@Resource
@@ -66,9 +68,18 @@ public class TimeJob {
 
 	//@Resource
 	//private DefaultRedisScript<Long> hashCleanExpiredSessionScript;
+
+	@Resource
+	private DefaultRedisScript<List> globalBucketInspectExpireScript;
 	
 	@Resource
 	private DefaultRedisScript<List> cleanExpiredUserConnScript;
+
+	/**
+	 * 巡检批量查询每批设备数量
+	 */
+	private static final int INSPECT_QUERY_BATCH = 50;
+
 
 	/**
 	 * 定时检查并清理过期的 Redis ws会话（每 15 秒执行一次,redis 会话过期时间 50s 僵尸会话最大存在65s）
@@ -184,6 +195,7 @@ public class TimeJob {
 	@Scheduled(fixedRate = 15_000, initialDelay = 15_000)
 	public void iotDeviceOfflineInspect() {
 		RLock lock = redissonClient.getLock(IOT_OFFLINE_LOCK_KEY);
+		log.info("IoT device offline inspection started");
 
 		boolean locked = false;
 		try {
@@ -194,7 +206,9 @@ public class TimeJob {
 			}
 
 			try {
-				doIotOfflineInspect();
+				for (int i = 0; i < MqttConstants.DEV_SHARD_SIZE; i++) {
+					inspectSingleGlobalBucket(i);
+				}
 			} catch (Exception e) {
 				log.error("IoT device offline inspection error", e);
 			}
@@ -205,7 +219,123 @@ public class TimeJob {
 			if (locked && lock.isHeldByCurrentThread()) {
 				lock.unlock();
 			}
+			log.info("IoT device offline inspection completed");
+
 		}
+	}
+
+
+
+	/**
+	 * 巡检清理单个全局分桶，原子移除僵尸设备，返回被清理deviceId集合
+	 * 查询dev 信息 ，获取 groupId、userId 等
+	 * 清理并返回
+	 * ws通知数量变动
+	 *
+	 * @param shardId 分桶编号 0~127
+	 * @return 该桶本次清理出来的僵尸设备id列表
+	 */
+	public List<String> inspectSingleGlobalBucket(int shardId){
+		String bucketKey = String.format(MqttConstants.IOT_DEV_GLOBAL_BUCKET, shardId);
+		long nowTs = System.currentTimeMillis();
+		long thresholdTs = nowTs - MqttConstants.IOT_DEVICE_OFFLINE_TIMEOUT_MS * 15 / 10;
+		// clean dev bucket
+		List<String> keys = Collections.singletonList(bucketKey);
+		List<Object> raw = stringRedisTemplate.execute(globalBucketInspectExpireScript, keys, String.valueOf(thresholdTs));
+		if(raw == null || raw.isEmpty()){
+			return Collections.emptyList();
+		}
+		List<String> result = new ArrayList<>(raw.size());
+		for (Object o : raw) {
+			if(o != null) {
+				result.add(o.toString());
+			}
+		}
+
+		List<List<String>> lists = partitionList(result, INSPECT_QUERY_BATCH);
+		HashMap<String, JSONObject> bucketAllExDevMap = new HashMap<>();
+		for (List<String> devIdList : lists) {
+			// deviceId,dev active info
+			Map<String, JSONObject> activeJsonMap = batchFetchDeviceActiveJson(devIdList);
+			bucketAllExDevMap.putAll(activeJsonMap);
+		}
+		// clean iot:{orgId}:group:dev:mems:{groupId}   ws notice rel user
+		Set<String> allChangeGroupSet = new HashSet<>();
+		bucketAllExDevMap.values().forEach(jsonObj -> {
+			String groupId = jsonObj.getString("groupId");
+
+			Set<String> devRelGroupSet = deviceRedisService.getDevRelGroupSet(groupId, jsonObj.getString("orgId"));
+			//groupIdSet.addAll(devRelGroupSet);
+			Set<String> relGroupAuthSet = deviceRedisService.getRelGroupAuthSet(devRelGroupSet, jsonObj.getString("orgId"));
+
+			boolean contains = allChangeGroupSet.contains(groupId);
+			if (!contains){
+				allChangeGroupSet.add(groupId);
+			}
+			// Double.NEGATIVE_INFINITY 对应 redis -inf  TODO  改成lua  返回删除列表 用于ws通知设备下线
+			Long removedCount = stringRedisTemplate.opsForZSet()
+					.removeRangeByScore(String.format(MqttConstants.IOT_ORG_GROUP_DEV_MEMS, jsonObj.getString("orgId"), groupId), Double.NEGATIVE_INFINITY, thresholdTs);
+
+			for (String userId : relGroupAuthSet) {
+				WsUploadDataDTO wsUploadDataDTO = new WsUploadDataDTO();
+				wsUploadDataDTO.setType(WsTypeEnum.IOT_DEVICE_ONLINE_COUNT.getCode());
+				WsUploadDataDTO.DataDTO dataDTO = new WsUploadDataDTO.DataDTO();
+				WsUploadDataDTO.DeviceDTO deviceDTO = new WsUploadDataDTO.DeviceDTO();
+				dataDTO.setGroupId(jsonObj.getString("groupId"));
+				dataDTO.setIotDeviceOnlineCount(Integer.valueOf(String.valueOf(removedCount)));
+				wsUploadDataDTO.setData(dataDTO);
+				wsUploadDataDTO.setDevice(deviceDTO);
+				wsPushService.pushToUser(userId, WsTypeEnum.IOT_DEVICE_ONLINE_COUNT.getCode(), wsUploadDataDTO);
+			}
+		});
+
+		return result;
+	}
+
+	/**
+	 * pipeline批量GET读取设备活跃json，减少网络RTT；兼容redis集群
+	 * @param devIdBatch 一批设备id
+	 * @return Map<deviceId,json字符串>；value为null代表key不存在
+	 */
+	private Map<String,JSONObject> batchFetchDeviceActiveJson(List<String> devIdBatch) {
+		Map<String,JSONObject> result = new HashMap<>(devIdBatch.size());
+
+		List<Object> response = stringRedisTemplate.executePipelined(
+				(RedisCallback<Object>) connection -> {
+					for (String devId : devIdBatch) {
+						byte[] keyBytes = String.format(MqttConstants.IOT_DEV_ACTIVE, devId)
+								.getBytes(StandardCharsets.UTF_8);
+						connection.get(keyBytes);
+					}
+					return null;
+				});
+		//response集合的顺序 和发送请求顺序完全一一对应！
+		for(int i=0;i<devIdBatch.size();i++){
+			String devId = devIdBatch.get(i);
+			JSONObject raw = JSONObject.parseObject(response.get(i).toString());
+			if(raw != null){
+				result.put(devId, raw);
+			}
+		}
+		return result;
+	}
+
+	/**
+	 * 手动对list进行分片，用于redis分批查询
+	 * @param source 原始集合
+	 * @param batchSize 每批大小
+	 * @return 分片之后
+	 */
+	private <T> List<List<T>> partitionList(List<T> source, int batchSize) {
+		List<List<T>> result = new ArrayList<>();
+		if(CollectionUtils.isEmpty(source)){
+			return result;
+		}
+		for(int i=0;i<source.size();i += batchSize){
+			int end = Math.min(i + batchSize, source.size());
+			result.add(source.subList(i,end));
+		}
+		return result;
 	}
 
 	/**
@@ -244,12 +374,12 @@ public class TimeJob {
 					// 核心判定：now - lastReportTs > 60s → 业务离线
 					if (now - lastReportTs > IOT_DEVICE_OFFLINE_TIMEOUT_MS) {
 						// 1. 更新 Redis 在线列表（纯 Redis 操作，返回剩余在线数）
-						deviceStateService.iotDeviceOffline(deviceId);
+						//deviceRedisService.iotDeviceOffline(deviceId);
 
 						// 2. 构建 WS 事件并推送给订阅用户
 						Set<String> subscriberUserIds = userDeviceRelService.getSubscriberUserIds(deviceId);
 						for (String userId : subscriberUserIds) {
-							long remainingCount = deviceStateService.getUserIotDeviceOnlineCount(userId);
+							long remainingCount = deviceRedisService.getUserIotDeviceOnlineCount(userId);
 							WsUploadDataDTO wsUploadDataDTO = new WsUploadDataDTO();
 							wsUploadDataDTO.setType(WsTypeEnum.IOT_DEVICE_ONLINE_COUNT.getCode());
 							WsUploadDataDTO.DataDTO dataDTO = new WsUploadDataDTO.DataDTO();

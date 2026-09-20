@@ -64,6 +64,10 @@ public class WsUploadDataDTO {
 		 */
 		private String altitude;
 		/**
+		 * groupId
+		 */
+		private String groupId;
+		/**
 		 * IoT设备在线数量
 		 */
 		private Integer iotDeviceOnlineCount;

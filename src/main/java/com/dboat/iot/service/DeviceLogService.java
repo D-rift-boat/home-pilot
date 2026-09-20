@@ -22,22 +22,6 @@ public interface DeviceLogService extends IService<DeviceLog> {
     void asyncSaveLog(DeviceLog deviceLog);
 
     /**
-     * 记录设备上线日志
-     *
-     * @param deviceId  设备唯一标识
-     * @param logDetail 上线详情 JSON（如传感器状态信息）
-     */
-    void logDeviceOnline(String deviceId, String logDetail);
-
-    /**
-     * 记录设备离线日志
-     *
-     * @param deviceId  设备唯一标识
-     * @param logDetail 离线详情 JSON（如最后传感器状态）
-     */
-    void logDeviceOffline(String deviceId, String logDetail);
-
-    /**
      * 记录设备异常日志
      *
      * @param deviceId       设备唯一标识
@@ -46,4 +30,12 @@ public interface DeviceLogService extends IService<DeviceLog> {
      * @param logDetail      异常详情 JSON
      */
     void logDeviceAbnormal(String deviceId, int abnormalStatus, String abnormalDesc, String logDetail);
+
+    /**
+     * 根据设备ID获取最新日志
+     *
+     * @param deviceId 设备唯一标识
+     * @return 设备日志
+     */
+    DeviceLog getLatestDeviceLogByDeviceId(String deviceId);
 }

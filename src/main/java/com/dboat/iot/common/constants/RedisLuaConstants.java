@@ -170,12 +170,22 @@ public final class RedisLuaConstants {
      * ARGV[2]: expire time   s
      * return 1: updated; 0: not updated
      */
-    public static final String LUA_IOT_DEV_HEARTBEAT = """
-            local oldTs = redis.call('GET', KEYS[1])
-            if oldTs and tonumber(ARGV[1]) <= tonumber(oldTs) then
+    public static final String LUA_UPDATE_DEV_ACTIVE =  """
+            local key = KEYS[1]
+            local newTs = tonumber(ARGV[1])
+            local newJson = ARGV[2]
+            local expireSec = tonumber(ARGV[3])
+            local oldVal = redis.call('GET', key)
+            if oldVal == false then
+                redis.call('SET', key, newJson, 'EX', expireSec)
+                return 1
+            end
+            local oldJson = cjson.decode(oldVal)
+            local oldTs = tonumber(oldJson.activeTs)
+            if newTs <= oldTs then
                 return 0
             end
-            redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
+            redis.call('SET', key, newJson, 'EX', expireSec)
             return 1
             """;
 }

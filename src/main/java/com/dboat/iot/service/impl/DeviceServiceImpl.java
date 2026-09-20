@@ -11,8 +11,9 @@ import com.dboat.iot.enums.DeviceOnlineStatusEnum;
 import com.dboat.iot.exception.BusinessException;
 import com.dboat.iot.mapper.DeviceMapper;
 import com.dboat.iot.service.DeviceService;
-import com.dboat.iot.service.ws.DeviceStateService;
+import com.dboat.iot.service.ws.DeviceRedisService;
 import jakarta.annotation.Resource;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -20,7 +21,7 @@ import org.springframework.util.StringUtils;
  * 设备资产业务服务实现类
  * <p>
  * 实现设备 CRUD、自动注册、状态管理等业务逻辑。
- * 设备在线状态统一由 Redis 维护（通过 {@link DeviceStateService}），
+ * 设备在线状态统一由 Redis 维护（通过 {@link DeviceRedisService}），
  * 查询接口返回时从 Redis 实时获取在线状态填充到响应 DTO 中。
  * </p>
  *
@@ -30,8 +31,9 @@ import org.springframework.util.StringUtils;
 public class DeviceServiceImpl extends ServiceImpl<DeviceMapper, Device> implements DeviceService {
 
     /** Redis 设备状态服务 */
+    @Lazy
     @Resource
-    private DeviceStateService deviceStateService;
+    private DeviceRedisService deviceRedisService;
 
     /**
      * 手动创建设备
@@ -98,7 +100,7 @@ public class DeviceServiceImpl extends ServiceImpl<DeviceMapper, Device> impleme
         }
         this.removeById(request.getId()); // Logical delete via @TableLogic
         // 同时清理 Redis 状态
-        deviceStateService.removeDeviceState(device.getDeviceId());
+        deviceRedisService.removeDeviceState(device.getDeviceId());
     }
 
     @Override
@@ -119,6 +121,20 @@ public class DeviceServiceImpl extends ServiceImpl<DeviceMapper, Device> impleme
             throw new BusinessException("Device not found: " + request.getDeviceId());
         }
         return toResponse(device);
+    }
+
+    @Override
+    public Device getDeviceByDevInfo(Device reqDevice) {
+        LambdaQueryWrapper<Device> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(Device::getDeviceId, reqDevice.getDeviceId());
+        return this.getOne(wrapper);
+    }
+
+    @Override
+    public Device getDeviceByDeviceId(String deviceId) {
+        LambdaQueryWrapper<Device> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(Device::getDeviceId, deviceId);
+        return this.getOne(wrapper);
     }
 
     @Override
@@ -162,7 +178,7 @@ public class DeviceServiceImpl extends ServiceImpl<DeviceMapper, Device> impleme
     public void updateStatus(String deviceId, int status) {
         // 设备在线状态统一由 Redis 管理
         if (status == DeviceOnlineStatusEnum.OFFLINE.getCode()) {
-            //deviceStateService.userDeviceOffline(deviceId);
+            //deviceRedisService.userDeviceOffline(deviceId);
         }
         // 在线状态由 MQTT 上报时 MqttMessageHandler 自动写入 Redis，此处无需额外处理
     }
@@ -190,7 +206,7 @@ public class DeviceServiceImpl extends ServiceImpl<DeviceMapper, Device> impleme
         response.setUpdateTime(device.getUpdateTime());
 
         // 从 Redis 判断设备是否在线（有 latest key 即为在线）
-        String latestData = deviceStateService.getDeviceLatestData(device.getDeviceId());
+        String latestData = deviceRedisService.getDeviceLatestData(device.getDeviceId());
         if (latestData != null) {
             response.setStatus(DeviceOnlineStatusEnum.ONLINE.getCode());
         } else {

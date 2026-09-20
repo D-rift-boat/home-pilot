@@ -1,6 +1,8 @@
 package com.dboat.iot.service.impl;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.dboat.iot.common.constants.DeviceLogEnum;
 import com.dboat.iot.entity.DeviceLog;
 import com.dboat.iot.mapper.DeviceLogMapper;
 import com.dboat.iot.service.DeviceLogService;
@@ -26,13 +28,6 @@ public class DeviceLogServiceImpl extends ServiceImpl<DeviceLogMapper, DeviceLog
 
     private static final Logger log = LoggerFactory.getLogger(DeviceLogServiceImpl.class);
 
-    /** 日志类型：设备上线 */
-    private static final String LOG_TYPE_ONLINE = "ONLINE";
-    /** 日志类型：设备离线 */
-    private static final String LOG_TYPE_OFFLINE = "OFFLINE";
-    /** 日志类型：设备异常 */
-    private static final String LOG_TYPE_ABNORMAL = "ABNORMAL";
-
     @Async
     @Override
     public void asyncSaveLog(DeviceLog deviceLog) {
@@ -45,37 +40,24 @@ public class DeviceLogServiceImpl extends ServiceImpl<DeviceLogMapper, DeviceLog
     }
 
     @Override
-    public void logDeviceOnline(String deviceId, String logDetail) {
-        DeviceLog deviceLog = new DeviceLog();
-        deviceLog.setDeviceId(deviceId);
-        deviceLog.setLogType(LOG_TYPE_ONLINE);
-        deviceLog.setLogDetail(logDetail);
-        deviceLog.setLogTime(LocalDateTime.now());
-        asyncSaveLog(deviceLog);
-        log.info("Device online log recorded for device: {}", deviceId);
-    }
-
-    @Override
-    public void logDeviceOffline(String deviceId, String logDetail) {
-        DeviceLog deviceLog = new DeviceLog();
-        deviceLog.setDeviceId(deviceId);
-        deviceLog.setLogType(LOG_TYPE_OFFLINE);
-        deviceLog.setLogDetail(logDetail);
-        deviceLog.setLogTime(LocalDateTime.now());
-        asyncSaveLog(deviceLog);
-        log.warn("Device offline log recorded for device: {}", deviceId);
-    }
-
-    @Override
     public void logDeviceAbnormal(String deviceId, int abnormalStatus, String abnormalDesc, String logDetail) {
         DeviceLog deviceLog = new DeviceLog();
         deviceLog.setDeviceId(deviceId);
-        deviceLog.setLogType(LOG_TYPE_ABNORMAL);
+        deviceLog.setLogType(DeviceLogEnum.ABNORMAL.getCode());
         deviceLog.setAbnormalStatus(abnormalStatus);
         deviceLog.setAbnormalDesc(abnormalDesc);
         deviceLog.setLogDetail(logDetail);
         deviceLog.setLogTime(LocalDateTime.now());
         asyncSaveLog(deviceLog);
         log.warn("Device abnormal log recorded for device [{}]: status={}, desc={}", deviceId, abnormalStatus, abnormalDesc);
+    }
+
+    @Override
+    public DeviceLog getLatestDeviceLogByDeviceId(String deviceId) {
+        LambdaQueryWrapper<DeviceLog> queryWrapper = new LambdaQueryWrapper<DeviceLog>()
+                .eq(DeviceLog::getDeviceId, deviceId)
+                .orderByDesc(DeviceLog::getLogTime)
+                .last("limit 1");
+        return this.getOne(queryWrapper);
     }
 }

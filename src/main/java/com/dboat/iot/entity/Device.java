@@ -1,7 +1,7 @@
 package com.dboat.iot.entity;
 
 import com.baomidou.mybatisplus.annotation.*;
-import com.dboat.iot.service.ws.DeviceStateService;
+import com.dboat.iot.service.ws.DeviceRedisService;
 import lombok.Data;
 
 import java.time.LocalDateTime;
@@ -10,7 +10,7 @@ import java.time.LocalDateTime;
  * 设备信息实体 —— 对应 MySQL 表 device_info
  * <p>
  * 存储设备的静态元数据属性（低频修改），如设备标识、名称、型号、固件版本等。
- * 设备的实时在线状态存储在 Redis 中（参见 {@link DeviceStateService}），
+ * 设备的实时在线状态存储在 Redis 中（参见 {@link DeviceRedisService}），
  * 不在此表中维护，避免高频上报导致 MySQL 压力。
  * </p>
  *
@@ -36,6 +36,16 @@ public class Device {
      * 设备名称（可读性描述），如 "客厅温湿度传感器"
      */
     private String deviceName;
+
+    /**
+     * 设备组织
+     */
+    private String orgId;
+
+    /**
+     * 设备分组
+     */
+    private String groupId;
 
     /**
      * 所属产品ID，用于设备分组/产品分类管理

@@ -78,7 +78,7 @@ spring:
 kafka:
   topic:
     telemetry-data: telemetry-data
-    iot-device-status: iot-device-status
+    iot-device-conn: iot-device-conn
     iot-heartbeat: iot-heartbeat
     dlq: dlq-iot # 消费失败死信Topic
 
@@ -102,7 +102,7 @@ mybatis-plus:
 # MQTT (EMQX Broker)
 mqtt:
   broker-url: tcp://localhost:1883
-  client-id: home-pilot-server
+  client-id: iot-pilot-server
   username: admin
   password: public
   connection-timeout: 30

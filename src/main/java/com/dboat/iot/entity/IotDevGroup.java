@@ -6,6 +6,9 @@ import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import java.io.Serializable;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
+
 import lombok.Data;
 
 /**
@@ -47,20 +50,23 @@ public class IotDevGroup implements Serializable {
     private Integer status;
 
     /**
-     * 
+     * 创建时间
      */
     private LocalDateTime createTime;
 
     /**
-     * 
+     * 更新时间
      */
     private LocalDateTime updateTime;
 
     /**
-     * 
+     * 删除时间
      */
     private LocalDateTime deleteTime;
 
     @TableField(exist = false)
     private static final long serialVersionUID = 1L;
+
+    @TableField(exist = false)
+    private List<IotDevGroup> children = new ArrayList<>();
 }

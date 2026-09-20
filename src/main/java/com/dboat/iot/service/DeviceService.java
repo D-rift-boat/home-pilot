@@ -57,6 +57,22 @@ public interface DeviceService extends IService<Device> {
     DeviceRespDTO getDeviceByDeviceId(DeviceGetByDeviceIdReqDTO request);
 
     /**
+     * 根据设备业务标识查询设备详情
+     *
+     * @param device 设备实体
+     * @return 设备详情（含 Redis 实时状态）
+     */
+    Device getDeviceByDevInfo(Device device);
+
+    /**
+     * 根据设备业务标识查询设备详情
+     *
+     * @param deviceId 设备实体
+     * @return 设备详情（含 Redis 实时状态）
+     */
+    Device getDeviceByDeviceId(String deviceId);
+
+    /**
      * 分页查询设备列表
      *
      * @param request 分页查询请求 DTO

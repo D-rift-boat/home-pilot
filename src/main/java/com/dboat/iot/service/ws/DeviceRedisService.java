@@ -1,12 +1,19 @@
 package com.dboat.iot.service.ws;
 
 import com.alibaba.fastjson2.JSONObject;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.dboat.iot.common.constants.MqttConstants;
 import com.dboat.iot.dto.mqtt.MqttMessageHeader;
 import com.dboat.iot.dto.ws.IotDevLineDTO;
 import com.dboat.iot.dto.ws.WsUploadDataDTO;
-import com.dboat.iot.service.UserDeviceRelService;
+import com.dboat.iot.entity.Device;
+import com.dboat.iot.entity.DeviceLog;
+import com.dboat.iot.entity.IotDevGroup;
+import com.dboat.iot.entity.IotGroupUserRel;
+import com.dboat.iot.service.*;
+import com.dboat.iot.utils.DateTimeUtils;
 import jakarta.annotation.Resource;
+import jakarta.validation.constraints.NotNull;
 import org.apache.commons.lang3.ObjectUtils;
 import org.redisson.api.RScript;
 import org.redisson.api.RedissonClient;
@@ -17,6 +24,7 @@ import org.springframework.context.annotation.Lazy;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Component;
+import org.springframework.util.CollectionUtils;
 
 import java.math.BigDecimal;
 import java.util.*;
@@ -46,9 +54,9 @@ import static com.dboat.iot.common.constants.RedisConstants.*;
  * @author dboat
  */
 @Component
-public class DeviceStateService {
+public class DeviceRedisService {
 
-    private static final Logger log = LoggerFactory.getLogger(DeviceStateService.class);
+    private static final Logger log = LoggerFactory.getLogger(DeviceRedisService.class);
 
     /**
      * Redis 模板，用于操作 Redis
@@ -79,7 +87,40 @@ public class DeviceStateService {
      * Lua 脚本：设备心跳处理
      */
     @Resource
-    private DefaultRedisScript<Integer> iotDevHeartbeatScript;
+    private DefaultRedisScript<Long> iotDevActiveUpdateScript;
+
+    @Resource
+    private DefaultRedisScript<Long> compareScoreUpdateGroupDevScript;
+
+    @Resource
+    private DefaultRedisScript<Long> devGlobalBucketZsetUpdateScript;
+
+    @Resource
+    private DefaultRedisScript<Long> groupDevZsetCompareTsRemoveScript;
+
+    @Resource
+    private DefaultRedisScript<Long> devGlobalBucketZsetCompareTsRemoveScript;
+
+
+    /**
+     * 设备分组服务，用于查询设备分组列表
+     */
+    @Resource
+    private  IotDevGroupService iotDevGroupService;
+    /**
+     * 设备资产服务，用于自动注册设备
+     */
+    @Resource
+    private DeviceService deviceService;
+    /**
+     * 设备日志服务，用于记录设备上下线、异常等事件
+     */
+    @Resource
+    private DeviceLogService deviceLogService;
+
+    @Resource
+    private IotGroupUserRelService iotGroupUserRelService;
+
 
     /**
      * Lua 脚本：仅当值为正数时递减（防止计数器减到负数）
@@ -149,17 +190,63 @@ public class DeviceStateService {
      * @param header     mqtt 报文 header
      * @return true=新设备上线（Key 新建），false=已有设备数据刷新
      */
-    public Boolean dealIotHeartBeat(MqttMessageHeader header) {
+    public Boolean dealIotHeartBeat(MqttMessageHeader header, String orgId, String groupId) {
         String deviceId = header.getDeviceId();
-        // ========== 刷新 Redis 设备心跳记录  ex 90s
-        Integer executeRes = stringRedisTemplate.execute(iotDevHeartbeatScript,
-                Collections.singletonList(String.format(MqttConstants.IOT_DEV_ACTIVE, header.getDeviceId())),
-                header.getTimestamp().toString(),
-                String.valueOf(MqttConstants.IOT_DEV_ACTIVE_EX));
+        //set IOT_ORG_GROUP_DEV_MEMS
+        long ts = header.getTimestamp();
+        int bucketNo = getDevBucketNo(deviceId);
+        // set IOT_ORG_GROUP_DEV_MEMS
+        compareScoreUpdateGroupDevScript(orgId, groupId, deviceId, ts);
+        //set IOT_DEV_GLOBAL_BUCKET
+        compareScoreUpdateGlobalBucketDevZset(bucketNo, deviceId, ts);
+        log.debug("Processed HEARTBEAT from device: {}", deviceId);
+        return true;
+    }
 
-        log.debug("Processed UP_DATA from device: {}", deviceId);
+    /**
+     * 全局设备分桶zset原子条件刷新score
+     * @param bucketNo 分桶编号
+     * @param iotDeviceId 设备id
+     * @param timestamp 最新活跃时间戳
+     * @return 1成功，0时序滞后丢弃
+     */
+    public Long compareScoreUpdateGlobalBucketDevZset(int bucketNo, String iotDeviceId, long timestamp) {
+        String zsetKey = String.format(MqttConstants.IOT_DEV_GLOBAL_BUCKET, bucketNo);
+        List<String> keys = Collections.singletonList(zsetKey);
+        return stringRedisTemplate.execute(devGlobalBucketZsetUpdateScript, keys,
+                iotDeviceId, String.valueOf(timestamp));
+    }
 
-        return ObjectUtils.isNotEmpty(executeRes) && executeRes > 0;
+    /**
+     * zset分组设备score条件刷新
+     * @param orgId
+     * @param groupId
+     * @param iotDeviceId
+     * @param timestamp
+     * @return
+     */
+    public Long compareScoreUpdateGroupDevScript(String orgId, String groupId, String iotDeviceId, long timestamp) {
+        String zsetKey = String.format(MqttConstants.IOT_ORG_GROUP_DEV_MEMS, orgId, groupId);
+        List<String> keys = Collections.singletonList(zsetKey);
+        return stringRedisTemplate.execute(compareScoreUpdateGroupDevScript, keys,
+                iotDeviceId, String.valueOf(timestamp));
+    }
+
+    /**
+     * 原子更新设备活跃缓存，时间戳校验，拒绝旧消息覆盖
+     * @param devId 设备id
+     * @param timestamp 新活跃时间戳
+     * @param jsonValue 完整json
+     * @param expireSeconds key过期秒（例如设备心跳超时阈值：300s）
+     * @return 1成功；0拒绝(时序旧)
+     */
+    public Long updateDeviceActiveAtomic(String devId, long timestamp, String jsonValue, int expireSeconds){
+        Long execute = stringRedisTemplate.execute(iotDevActiveUpdateScript,
+                Collections.singletonList(String.format(MqttConstants.IOT_DEV_ACTIVE, devId)),
+                String.valueOf(timestamp),
+                jsonValue,
+                String.valueOf(expireSeconds));
+        return execute;
     }
 
     /**
@@ -339,6 +426,129 @@ public class DeviceStateService {
     }
 
     /**
+     * getDevActiveJsonInfo  iot:dev:active:{devId}
+     * @param deviceId
+     * @return
+     */
+    public JSONObject getDevActiveJsonInfo(String deviceId) {
+        JSONObject activeInfoJson;
+        String activeInfo = stringRedisTemplate.opsForValue().get(String.format(MqttConstants.IOT_DEV_ACTIVE, deviceId));
+        if (ObjectUtils.isEmpty(activeInfo)) {
+            //组装 IOT_DEV_ACTIVE
+            Device deviceInfo = deviceService.getDeviceByDeviceId(deviceId);
+            if (ObjectUtils.isEmpty(deviceInfo)) {
+                log.warn("Device not found for deviceId: {}", deviceId);
+                throw new RuntimeException("Device not found for deviceId: " + deviceId);
+            }
+            DeviceLog deviceLog = deviceLogService.getLatestDeviceLogByDeviceId(deviceId);
+            activeInfoJson = new JSONObject();
+            activeInfoJson.put("groupId", deviceInfo.getGroupId());
+            activeInfoJson.put("orgId", deviceInfo.getOrgId());
+            activeInfoJson.put("traceId", ObjectUtils.isNotEmpty(deviceLog.getTraceId()) ? deviceLog.getTraceId() : "");
+            activeInfoJson.put("activeTs", ObjectUtils.isNotEmpty(deviceLog.getLogTime()) ? DateTimeUtils.beijingLocalToUtcMilli(deviceLog.getLogTime()) : 0l);
+            stringRedisTemplate.opsForValue().set(String.format(MqttConstants.IOT_DEV_ACTIVE, deviceId), activeInfoJson.toString());
+        } else {
+            activeInfoJson = JSONObject.parseObject(activeInfo);
+        }
+        return activeInfoJson;
+    }
+
+    /**
+     * 获取设备相关分组集合
+     *
+      * @param groupId 设备分组ID
+      * @param orgId 设备所属租户
+     * @return 设备相关分组集合
+     */
+    public @NotNull Set<String> getDevRelGroupSet(String groupId, String orgId) {
+        Set<String> devRelGroupSet = stringRedisTemplate.opsForSet().members(String.format(MqttConstants.IOT_GROUP_REL, groupId));
+        if (ObjectUtils.isEmpty(devRelGroupSet)) {
+            // create IOT_GROUP_REL
+            List<IotDevGroup> devGroupList = iotDevGroupService.list(new LambdaQueryWrapper<IotDevGroup>().eq(IotDevGroup::getOrgId, orgId));
+            //List<IotDevGroup> iotDevGroups = buildGroupTree(devGroupList);
+            devRelGroupSet = findGroupAndAllParentGroupSet(devGroupList, groupId);
+            if(!CollectionUtils.isEmpty(devRelGroupSet)){
+                stringRedisTemplate.opsForSet().add(String.format(MqttConstants.IOT_GROUP_REL, groupId), devRelGroupSet.toArray(new String[0]));
+            }
+        }
+        return devRelGroupSet;
+    }
+
+    /**
+     * 获取相关分组授权userId集合
+     *
+     * @param devRelGroupSet 设备相关分组集合
+     * @param orgId
+     * @return 相关分组授权集合
+     */
+    public @NotNull Set<String> getRelGroupAuthSet(Set<String> devRelGroupSet, String orgId) {
+        Set<String> relGroupAuthSet = new HashSet<>();
+        for (String gId : devRelGroupSet) {
+            Set<String> groupAuthSet = stringRedisTemplate.opsForSet().members(String.format(MqttConstants.IOT_ORG_GROUP_AUTH, orgId, gId));
+            if (ObjectUtils.isEmpty(groupAuthSet)){
+                List<IotGroupUserRel> groupUserRelList = iotGroupUserRelService.list(new LambdaQueryWrapper<IotGroupUserRel>()
+                        .eq(IotGroupUserRel::getOrgId, orgId)
+                        .eq(IotGroupUserRel::getGroupId, gId)
+                );
+                groupAuthSet = groupUserRelList.stream().map(IotGroupUserRel::getUserId).collect(Collectors.toSet());
+                stringRedisTemplate.opsForSet().add(String.format(MqttConstants.IOT_ORG_GROUP_AUTH, orgId, gId),
+                        groupAuthSet.toArray(String[]::new));
+            }
+            // get all related group auth set
+            relGroupAuthSet.addAll(groupAuthSet);
+        }
+        return relGroupAuthSet;
+    }
+
+    /**
+     * 根据指定groupId向上回溯，获取【自身+所有上层父分组groupId集合】
+     * @param allGroupList 当前租户全部分组数据
+     * @param targetGroupId 当前选中的groupId
+     * @return 向上路径id集合 [子id,父id,祖父id...]
+     */
+    public static Set<String> findGroupAndAllParentGroupSet(List<IotDevGroup> allGroupList, String targetGroupId){
+        Set<String> resultSet = new LinkedHashSet<>();
+        if(CollectionUtils.isEmpty(allGroupList) || ObjectUtils.isEmpty(targetGroupId)){
+            return resultSet;
+        }
+        Map<String, IotDevGroup> groupMap = allGroupList.stream()
+                .collect(Collectors.toMap(IotDevGroup::getGroupId, g -> g));
+        String currId = targetGroupId;
+        while(ObjectUtils.isNotEmpty(currId)){
+            IotDevGroup currNode = groupMap.get(currId);
+            if(currNode == null){
+                break;
+            }
+            resultSet.add(currId);
+            currId = currNode.getParentGroupId();
+        }
+        return resultSet;
+    }
+
+    /**
+     * IoT 设备上线：
+     * 查询 设备所属关联集合
+     * IOT_DEV_GLOBAL_BUCKET 新增
+     * IOT_ORG_GROUP_DEV_MEMS 新增
+     *
+     * @param iotDeviceId 上线设备ID
+     * @return 最后一个订阅用户更新后的在线设备数（无订阅用户时返回 0）
+     */
+    public long iotDeviceOnline(String orgId,String groupId, String iotDeviceId, Long timestamp) {
+        long nowTs = System.currentTimeMillis();
+        int bucketNo = getDevBucketNo(iotDeviceId);
+        //set IOT_DEV_GLOBAL_BUCKET
+        // set IOT_ORG_GROUP_DEV_MEMS
+        compareScoreUpdateGroupDevScript(orgId, groupId, iotDeviceId, timestamp);
+        //set IOT_DEV_GLOBAL_BUCKET
+        compareScoreUpdateGlobalBucketDevZset(bucketNo, iotDeviceId, timestamp);
+        Long count = stringRedisTemplate.opsForZSet().count(String.format(MqttConstants.IOT_ORG_GROUP_DEV_MEMS, orgId, groupId),
+                nowTs - MqttConstants.IOT_DEVICE_OFFLINE_TIMEOUT_MS * 1.5, nowTs);
+
+        return count;
+    }
+
+    /**
      * IoT 设备离线：从所有订阅用户的在线列表中移除该设备
      * <p>
      * 纯 Redis 操作，不涉及 WS 事件推送（由调用方负责构建事件并推送）。
@@ -347,34 +557,57 @@ public class DeviceStateService {
      * @param iotDeviceId 离线设备ID
      * @return 最后一个订阅用户更新后的剩余在线设备数（无订阅用户时返回 0）
      */
-    public long iotDeviceOffline(String iotDeviceId) {
-        Set<String> userIdSet = userDeviceRelService.getSubscriberUserIds(iotDeviceId);
-        long lastCount = 0;
-        for (String userId : userIdSet) {
-            lastCount = offlineUserIotDev(userId, iotDeviceId);
-            log.info("IoT device offline, userId={}, remainingCount={}", userId, lastCount);
-        }
-        return lastCount;
+    public long iotDeviceOffline(String orgId,String groupId, String iotDeviceId, Long timestamp) {
+        //set IOT_ORG_GROUP_DEV_MEMS
+        long nowTs = System.currentTimeMillis();
+        compareTsRemoveGroupDeviceZset(orgId, groupId, iotDeviceId, timestamp);
+        //set IOT_DEV_GLOBAL_BUCKET
+        int bucketNo = getDevBucketNo(iotDeviceId);
+        compareTsRemoveGlobalBucketDeviceZset(bucketNo, iotDeviceId, timestamp);
+        Long count = stringRedisTemplate.opsForZSet().count(String.format(MqttConstants.IOT_DEV_GLOBAL_BUCKET, bucketNo),
+                nowTs - MqttConstants.IOT_DEVICE_OFFLINE_TIMEOUT_MS * 1.5, nowTs);
+        return count;
     }
 
     /**
-     * IoT 设备上线：将设备加入所有订阅用户的在线列表
-     * <p>
-     * 纯 Redis 操作，不涉及 WS 事件推送（由调用方负责构建事件并推送）。
-     * </p>
-     *
-     * @param iotDeviceId 上线设备ID
-     * @return 最后一个订阅用户更新后的在线设备数（无订阅用户时返回 0）
+     * 全局分桶zset条件删除设备member；仅事件ts大于原有score才执行ZREM
+     * @param bucketNo 分桶编号
+     * @param iotDeviceId 设备id
+     * @param eventTs 离线/迁移事件时间戳
+     * @return 1删除成功；0时序滞后拒绝；2成员不存在
      */
-    public long iotDeviceOnline(String iotDeviceId) {
-        Set<String> userIdSet = userDeviceRelService.getSubscriberUserIds(iotDeviceId);
-        log.info("Device subscribe user list：{}", userIdSet);
-        long lastCount = 0;
-        for (String userId : userIdSet) {
-            lastCount = onlineUserIotDev(userId, iotDeviceId);
-            log.info("IoT device online, userId={}, onlineCount={}", userId, lastCount);
-        }
-        return lastCount;
+    public Long compareTsRemoveGlobalBucketDeviceZset(int bucketNo, String iotDeviceId, long eventTs) {
+        String zsetKey = String.format(MqttConstants.IOT_DEV_GLOBAL_BUCKET, bucketNo);
+        List<String> keys = Collections.singletonList(zsetKey);
+        return stringRedisTemplate.execute(devGlobalBucketZsetCompareTsRemoveScript, keys,
+                iotDeviceId, String.valueOf(eventTs));
+    }
+
+
+    /**
+     * zset条件删除分组下设备；仅当事件ts>原有score才删除member
+     * @param orgId 租户id
+     * @param groupId 分组id
+     * @param iotDeviceId 设备id
+     * @param eventTs 离线事件时间戳
+     * @return 1删除成功；0时序滞后拒绝；2成员本不存在
+     */
+    public Long compareTsRemoveGroupDeviceZset(String orgId, String groupId, String iotDeviceId, long eventTs) {
+        String zsetKey = String.format(MqttConstants.IOT_ORG_GROUP_DEV_MEMS, orgId, groupId);
+        List<String> keys = Collections.singletonList(zsetKey);
+        return stringRedisTemplate.execute(groupDevZsetCompareTsRemoveScript, keys,
+                iotDeviceId, String.valueOf(eventTs));
+    }
+
+    /**
+     * 获取设备分片编号
+     * @param iotDeviceId
+     * @return int
+     */
+    private static int getDevBucketNo(String iotDeviceId) {
+        int devHash = iotDeviceId.hashCode();
+        int bucketNo = (devHash & Integer.MAX_VALUE) % MqttConstants.DEV_SHARD_SIZE;
+        return bucketNo;
     }
 
     /**

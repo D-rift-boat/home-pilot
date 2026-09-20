@@ -1,6 +1,6 @@
 package com.dboat.iot.config;
 
-import com.dboat.iot.service.ws.DeviceStateService;
+import com.dboat.iot.service.ws.DeviceRedisService;
 import jakarta.annotation.Resource;
 import org.redisson.api.RScript;
 import org.redisson.api.RedissonClient;
@@ -82,7 +82,7 @@ public class RedisConfig {
      * 专用于纯字符串操作场景（如设备状态 Hash 存储），
      * Key 和 Value 均使用 String 序列化，性能最优。
      * 设备状态存储使用 Hash 结构（HSET/HGET），
-     * 通过 {@link DeviceStateService} 封装操作。
+     * 通过 {@link DeviceRedisService} 封装操作。
      * </p>
      *
      * @param connectionFactory Spring 自动注入的 Redis 连接工厂

@@ -4,8 +4,6 @@ import com.dboat.iot.dto.emqx.DeviceConnectDomainEvent;
 import com.dboat.iot.dto.emqx.EmqxOfflineExternalDTO;
 import com.dboat.iot.dto.emqx.EmqxOnlineExternalDTO;
 import com.dboat.iot.enums.webhook.WebHookEventTypeEnum;
-import com.dboat.iot.service.DeviceConnectEventService;
-import jakarta.annotation.Resource;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -13,6 +11,12 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+/**
+ * Deprecated
+ * EMQX Webhook 走 kafka
+ *
+ */
+@Deprecated
 @RestController
 @RequestMapping("/api/emqx")
 public class EmqxWebhookController {
@@ -20,8 +24,8 @@ public class EmqxWebhookController {
     // webhook密钥，和EMQX配置的query参数token保持一致
     private final String WEBHOOK_SECRET_TOKEN = "emqx_xxxx_123456";
 
-    @Resource
-    private DeviceConnectEventService deviceConnectEventService;
+    //@Resource
+    //private DeviceConnectEventService deviceConnectEventService;
 
 
 
@@ -43,11 +47,11 @@ public class EmqxWebhookController {
         //异步提交，立刻返回，不阻塞http回调
         //iotEventTaskExecutor.execute(() -> {
         //});
-        if("home-pilot-server".equals(dto.getClientid())){
+        if("iot-pilot-server".equals(dto.getClientid())){
             return ResponseEntity.ok().build();
         }
         DeviceConnectDomainEvent domainEvent = buildOnlineDomainEvent(dto);
-        deviceConnectEventService.handleConnectDomainEvent(domainEvent);
+        //deviceConnectEventService.handleConnectDomainEvent(domainEvent);
         return ResponseEntity.ok().build();
     }
 
@@ -62,7 +66,7 @@ public class EmqxWebhookController {
         //    return ResponseEntity.status(403).build();
         //}
         // 过滤后端服务自身的mqtt客户端，不是硬件IoT设备，直接丢弃
-        if("home-pilot-server".equals(dto.getClientid())){
+        if("iot-pilot-server".equals(dto.getClientid())){
             return ResponseEntity.ok().build();
         }
         if (dto.getClientid() == null || dto.getClientid().isBlank()) {
@@ -70,7 +74,7 @@ public class EmqxWebhookController {
         }
 
         DeviceConnectDomainEvent domainEvent = buildOfflineDomainEvent(dto);
-        deviceConnectEventService.handleConnectDomainEvent(domainEvent);
+        //deviceConnectEventService.handleConnectDomainEvent(domainEvent);
         return ResponseEntity.ok().build();
     }
 

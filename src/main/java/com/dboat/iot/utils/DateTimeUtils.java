@@ -25,7 +25,27 @@ public final class DateTimeUtils {
     }
 
     // ==================== 时区常量 ====================
-    public static final ZoneId ASIA_SHANGHAI = ZoneId.of("Asia/Shanghai");
+    public static final ZoneId ZONE_SHANGHAI = ZoneId.of("Asia/Shanghai");
+    public static final ZoneId ZONE_UTC = ZoneId.of("UTC");
+
+    /**
+     * 硬件上报UTC毫秒时间戳 --> MySQL的LocalDateTime(北京时间，用于入库datetime)
+     */
+    public static LocalDateTime utcMilliToBeijingLocal(long utcMilli){
+        return Instant.ofEpochMilli(utcMilli)
+                .atZone(ZONE_UTC)
+                .withZoneSameInstant(ZONE_SHANGHAI) //同一个物理时刻，转为东八区
+                .toLocalDateTime();
+    }
+
+    /**
+     * LocalDateTime(北京时间数据库读出) → UTC毫秒（写入Redis /下发消息）
+     */
+    public static long beijingLocalToUtcMilli(LocalDateTime beijingTime){
+        return beijingTime.atZone(ZONE_SHANGHAI)
+                .toInstant()
+                .toEpochMilli();
+    }
 
     // ==================== 日期格式常量 ====================
     public static final String PATTERN_DATETIME = "yyyy-MM-dd HH:mm:ss";
@@ -37,13 +57,13 @@ public final class DateTimeUtils {
 
     // ==================== DateTimeFormatter 常量（线程安全） ====================
     public static final DateTimeFormatter FORMATTER_DATETIME =
-            DateTimeFormatter.ofPattern(PATTERN_DATETIME).withZone(ASIA_SHANGHAI);
+            DateTimeFormatter.ofPattern(PATTERN_DATETIME).withZone(ZONE_SHANGHAI);
     public static final DateTimeFormatter FORMATTER_DATE =
-            DateTimeFormatter.ofPattern(PATTERN_DATE).withZone(ASIA_SHANGHAI);
+            DateTimeFormatter.ofPattern(PATTERN_DATE).withZone(ZONE_SHANGHAI);
     public static final DateTimeFormatter FORMATTER_DATETIME_COMPACT =
-            DateTimeFormatter.ofPattern(PATTERN_DATETIME_COMPACT).withZone(ASIA_SHANGHAI);
+            DateTimeFormatter.ofPattern(PATTERN_DATETIME_COMPACT).withZone(ZONE_SHANGHAI);
     public static final DateTimeFormatter FORMATTER_ISO_DATETIME =
-            DateTimeFormatter.ofPattern(PATTERN_ISO_DATETIME).withZone(ASIA_SHANGHAI);
+            DateTimeFormatter.ofPattern(PATTERN_ISO_DATETIME).withZone(ZONE_SHANGHAI);
 
     // ==================== String → 各种时间类型 ====================
 
@@ -86,7 +106,7 @@ public final class DateTimeUtils {
 
     /** 毫秒时间戳 → LocalDateTime */
     public static LocalDateTime milliToLocalDateTime(long timestamp) {
-        return LocalDateTime.ofInstant(Instant.ofEpochMilli(timestamp), ASIA_SHANGHAI);
+        return LocalDateTime.ofInstant(Instant.ofEpochMilli(timestamp), ZONE_SHANGHAI);
     }
 
     /** 毫秒时间戳 → Instant */
@@ -138,7 +158,7 @@ public final class DateTimeUtils {
             return null;
         }
         return DateTimeFormatter.ofPattern(pattern)
-                .withZone(ASIA_SHANGHAI)
+                .withZone(ZONE_SHANGHAI)
                 .format(instant);
     }
 
@@ -149,7 +169,7 @@ public final class DateTimeUtils {
         if (dateTime == null) {
             return null;
         }
-        return dateTime.atZone(ASIA_SHANGHAI).toInstant();
+        return dateTime.atZone(ZONE_SHANGHAI).toInstant();
     }
 
     /** Instant → LocalDateTime（按 GMT+8 时区转换） */
@@ -157,7 +177,7 @@ public final class DateTimeUtils {
         if (instant == null) {
             return null;
         }
-        return LocalDateTime.ofInstant(instant, ASIA_SHANGHAI);
+        return LocalDateTime.ofInstant(instant, ZONE_SHANGHAI);
     }
 
     // ==================== LocalDateTime ↔ Date 互转 ====================
@@ -167,7 +187,7 @@ public final class DateTimeUtils {
         if (dateTime == null) {
             return null;
         }
-        return Date.from(dateTime.atZone(ASIA_SHANGHAI).toInstant());
+        return Date.from(dateTime.atZone(ZONE_SHANGHAI).toInstant());
     }
 
     /** Date → LocalDateTime */
@@ -175,7 +195,7 @@ public final class DateTimeUtils {
         if (date == null) {
             return null;
         }
-        return LocalDateTime.ofInstant(date.toInstant(), ASIA_SHANGHAI);
+        return LocalDateTime.ofInstant(date.toInstant(), ZONE_SHANGHAI);
     }
 
     // ==================== Date ↔ Instant 互转 ====================
@@ -194,7 +214,7 @@ public final class DateTimeUtils {
 
     /** 获取当前时间的 LocalDateTime */
     public static LocalDateTime now() {
-        return LocalDateTime.now(ASIA_SHANGHAI);
+        return LocalDateTime.now(ZONE_SHANGHAI);
     }
 
     /** 获取当前时间字符串（yyyy-MM-dd HH:mm:ss） */
@@ -209,11 +229,11 @@ public final class DateTimeUtils {
 
     /** 获取当天开始时间（00:00:00） */
     public static LocalDateTime startOfDay() {
-        return LocalDate.now(ASIA_SHANGHAI).atStartOfDay();
+        return LocalDate.now(ZONE_SHANGHAI).atStartOfDay();
     }
 
     /** 获取当天结束时间（23:59:59） */
     public static LocalDateTime endOfDay() {
-        return LocalDate.now(ASIA_SHANGHAI).atTime(23, 59, 59);
+        return LocalDate.now(ZONE_SHANGHAI).atTime(23, 59, 59);
     }
 }

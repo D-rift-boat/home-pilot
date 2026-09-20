@@ -1,7 +1,10 @@
 package com.dboat.iot.entity;
 
 import com.baomidou.mybatisplus.annotation.*;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.Data;
+import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
 
@@ -19,6 +22,9 @@ import java.time.LocalDateTime;
  * @author dboat
  */
 @Data
+@Builder
+@AllArgsConstructor
+@NoArgsConstructor
 @TableName("device_log")
 public class DeviceLog {
 
@@ -32,6 +38,15 @@ public class DeviceLog {
      * 关联设备唯一标识（对应 Device.deviceId）
      */
     private String deviceId;
+
+    /**
+     * 关联追踪唯一标识（对应 traceId）
+     */
+    private String traceId;
+    /**
+     * orgId
+     */
+    private String orgId;
 
     /**
      * 日志类型：ONLINE=上线, OFFLINE=离线, ABNORMAL=异常

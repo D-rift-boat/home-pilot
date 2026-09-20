@@ -29,9 +29,9 @@ public final class KafkaTopicConstants {
 
     /**
      * Config key for iot device status topic.
-     * Corresponding yml config: kafka.topic.iot-device-status
+     * Corresponding yml config: kafka.topic.iot-device-conn
      */
-    public static final String IOT_DEVICE_STATUS_TOPIC = "kafka.topic.iot-device-status";
+    public static final String IOT_DEVICE_CONN_TOPIC = "kafka.topic.iot-device-conn";
 
     /**
      * Config key for iot device heartbeat topic.

@@ -55,8 +55,10 @@ public class IotDevConsumer {
 	@Resource
 	private MqttMessageHandler mqttMessageHandler;
 
+	private final String BACKEND_PREFIX = "iot-pilot";
 
-	@Value("${" + KafkaTopicConstants.IOT_DEVICE_STATUS_TOPIC + "}")
+
+	@Value("${" + KafkaTopicConstants.IOT_DEVICE_CONN_TOPIC + "}")
 	private String iotDeviceStatusTopic;
 
 	/**
@@ -70,35 +72,43 @@ public class IotDevConsumer {
 	 * @param records 本批次拉取到的消息集合
 	 * @param ack     手动偏移量提交句柄
 	 */
-	@KafkaListener(topics = "${" + KafkaTopicConstants.IOT_DEVICE_STATUS_TOPIC + "}",
-			autoStartup = "#{!'true'.equals('${mqtt.directSubscribeSwitch}') && !'true'.equals('${mqtt.webHookSwitch}')}")
-	public void onIotDeviceStatus(List<ConsumerRecord<String, String>> records, Acknowledgment ack) {
+	@KafkaListener(topics = "${" + KafkaTopicConstants.IOT_DEVICE_CONN_TOPIC + "}",
+			autoStartup = "#{!'true'.equals('${mqtt.directSubscribeSwitch}') && 'true'.equals('${mqtt.webHookSwitch}')}")
+	public void onIotDeviceConnect(List<ConsumerRecord<String, String>> records, Acknowledgment ack) {
 		if (records == null || records.isEmpty()) {
 			return;
 		}
-		log.info("Consumed {} telemetry msg(s) from kafka", records.size());
+		log.info("Consumed {} conn event msg(s) from kafka", records.size());
 
 		// 逐条解析并复用 MQTT 上行处理链路（解析失败仅跳过该条，不阻塞整批）
 		for (ConsumerRecord<String, String> record : records) {
 			try {
 				MqttUpDataMessage msg = parseToUpDataMessage(record.value());
-				if (msg == null) {
-					log.warn("Invalid telemetry msg, skip. offset={}, value={}",
+				if (ObjectUtils.isEmpty(msg)) {
+					log.warn("Invalid  conn event msg, skip. offset={}, value={}",
+							record.offset(), record.value());
+					continue;
+				}
+				if (msg.getHeader().getDeviceId().startsWith(BACKEND_PREFIX)){
+					log.debug("this is a backend conn message, skip. offset={}, value={}",
 							record.offset(), record.value());
 					continue;
 				}
 				// 设备状态主题
 				// 若不启用 WebHook，则使用固件固定上下线机制 处理设备状态主题
-				if (msg.getHeader().getMsgType().equals(MqttConstants.ONLINE)) {
-					log.info("device online: {}", msg.getHeader().getDeviceId());
-					mqttMessageHandler.handleIotDeviceConnect(iotDeviceStatusTopic, msg);
-				} else if (msg.getHeader().getMsgType().equals(MqttConstants.OFFLINE)) {
-					log.info("device offline: {}", msg.getHeader().getDeviceId());
-					mqttMessageHandler.handleIotDeviceDisconnected(iotDeviceStatusTopic, msg);
+				switch (msg.getHeader().getMsgType()) {
+					case MqttConstants.ONLINE:
+						log.info("device online: {}", msg.getHeader().getDeviceId());
+						mqttMessageHandler.handleIotDeviceConnect(iotDeviceStatusTopic, msg);
+						break;
+					case MqttConstants.OFFLINE:
+						log.info("device offline: {}", msg.getHeader().getDeviceId());
+						mqttMessageHandler.handleIotDeviceDisconnected(iotDeviceStatusTopic, msg);
+						break;
 				}
 
 			} catch (Exception e) {
-				log.error("Failed to handle telemetry msg, skip. offset={}, value={}",
+				log.error("Failed to handle conn event msg, skip. offset={}, value={}",
 						record.offset(), record.value(), e);
 			}
 		}
@@ -134,6 +144,11 @@ public class IotDevConsumer {
 							record.offset(), record.value());
 					continue;
 				}
+				if (msg.getHeader().getDeviceId().startsWith(BACKEND_PREFIX)){
+					log.debug("this is a backend heartbeat message, skip. offset={}, value={}",
+							record.offset(), record.value());
+					continue;
+				}
 				mqttMessageHandler.handleIotHeartbeatUpload(msg);
 			} catch (Exception e) {
 				log.error("Failed to handle telemetry msg, skip. offset={}, value={}",
@@ -157,15 +172,12 @@ public class IotDevConsumer {
 	 */
 	private MqttUpDataMessage parseToUpDataMessage(String value) {
 		JSONObject json = JSONObject.parseObject(value);
-		if (json == null) {
+		if (ObjectUtils.isEmpty(json)) {
 			return null;
 		}
 		if (json.containsKey("header")) {
 			// EMQX 规则引擎直接转发的设备原始报文
 			MqttUpDataMessage msg = JSONObject.parseObject(value, MqttUpDataMessage.class);
-			if (msg == null || msg.getHeader() == null || msg.getPayload() == null) {
-				return null;
-			}
 			return msg;
 		}
 		// 规则引擎加工后的扁平化报文 → 转换为标准报文

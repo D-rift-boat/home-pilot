@@ -44,7 +44,7 @@ import static com.dboat.iot.common.constants.WebSocketConstants.*;
  *   <li>查询用户会话节点分布（供分布式推送使用）</li>
  *   <li>在线会话计数</li>
  * </ul>
- * 从 DeviceStateService 拆分而来，实现 WS 路由与 IoT 设备状态的解耦。
+ * 从 DeviceRedisService 拆分而来，实现 WS 路由与 IoT 设备状态的解耦。
  * </p>
  *
  * @author dboat
@@ -230,7 +230,7 @@ public class WsSessionRoutingService {
         Set<String> nodeSet = new HashSet<>();
         long offset = 0;
         while (true) {
-            // 【分页读取ZSet过期数据，带score】
+            // 【分页读取ZSet未过期数据  在线，带score】
             Set<ZSetOperations.TypedTuple<String>> tuples = stringRedisTemplate.opsForZSet()
                     .rangeByScoreWithScores(zsetKey, now, expireTsMs, offset, BATCH_SIZE);
             if (tuples.isEmpty()) {
