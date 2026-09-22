@@ -8,6 +8,7 @@ import com.dboat.iot.service.TelemetryDataService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -23,16 +24,11 @@ import java.util.List;
  */
 @RestController
 @RequestMapping("/api/sensorData")
+@RequiredArgsConstructor
 @Tag(name = "Sensor Data", description = "传感器数据查询 API")
-public class SensorDataController {
+public class TelemetryDataController {
 
-    /** 传感器数据业务服务 */
     private final TelemetryDataService telemetryDataService;
-
-    /** 构造器注入传感器数据服务 */
-    public SensorDataController(TelemetryDataService telemetryDataService) {
-        this.telemetryDataService = telemetryDataService;
-    }
 
     /**
      * 按时间范围查询传感器历史数据

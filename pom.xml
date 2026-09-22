@@ -12,9 +12,9 @@
     </parent>
 
     <groupId>com.dboat</groupId>
-    <artifactId>home-pilot</artifactId>
+    <artifactId>iot-pilot-backend</artifactId>
     <version>1.0-SNAPSHOT</version>
-    <name>home-pilot</name>
+    <name>iot-pilot-backend</name>
     <description>IoT Device Management System</description>
 
     <properties>
